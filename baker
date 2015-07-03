@@ -1,0 +1,34 @@
+#!/usr/bin/python
+
+import os
+import subprocess
+import sys
+
+def compileFiles(dirName, dirContent):
+    """
+    Compile all source files found in dirContent
+    """
+
+    for file in dirContent:
+        if file.endswith(".c"):
+            if not os.path.isdir("target"):
+                os.mkdir("target")
+
+            try:
+                subprocess.check_output(["cc", "-c", os.path.join(dirName, file), "-o", "target/" + file[:-2] + ".o"],
+                                         stderr=subprocess.STDOUT)
+            except subprocess.CalledProcessError as error:
+                sys.stderr.write(error.output)
+                sys.exit("%s: Failed to compile C file %s/%s" % (__file__, dirName, file))
+
+# Compile any source files found in the current directory
+
+dirName    = os.path.abspath(".")
+dirContent = os.listdir(".")
+compileFiles(dirName, dirContent)
+
+# If there's a test directory, compile all source files in it as well
+
+if os.path.isdir("test"):
+    dirContent = os.listdir("test")
+    compileFiles("test", dirContent)
