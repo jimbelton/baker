@@ -55,8 +55,11 @@ class Directory:
 
         return (self.files, self.subDirs)
 
-def findFile(dirPath, fileName, exclude=None):
-    sys.exit("find file " + fileName + " in directory " + dirPath)
+def findFile(dirPath, fileName):
+    try:
+        return fileToDirectory[fileName].path
+    except KeyError:
+        return None
 
 def compileDir(dirPath):
     """
@@ -90,7 +93,8 @@ def compileDir(dirPath):
 
                     if not hFile:
                         sys.stderr.write(error.output)
-                        sys.exit("%s: Failed to compile C file %s/%s" % (__file__, dirPath, entry))
+                        sys.exit("%s: Failed to find C header file %s included by %s/%s"
+                                 % (__file__, match.group(1), dirPath, entry))
 
                     hFiles.append(hFile)
 
