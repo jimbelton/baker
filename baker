@@ -1,34 +1,111 @@
 #!/usr/bin/python
 
 import os
+import re
 import subprocess
 import sys
 
-def compileFiles(dirName, dirContent):
+doh             = {}
+hFilePat        = re.compile(r'\s(\S+\.h): No such file')
+directories     = {}
+fileToDirectory = {}
+
+class Directory:
+    def __init__(self, path):
+        self.path         = path
+        directories[path] = self
+
+    @classmethod
+    def fromPath(clazz, path):
+        """
+        Get or construct directory object for path
+        """
+
+        try:
+            return directories[path]
+        except KeyError:
+            return clazz(path)
+
+    def getDirContents(self):
+        """
+        Get contents of directory, caching them, and map include/import file names back to directories
+        """
+
+        try:
+            return (self.files, self.subDirs)
+        except AttributeError:
+            self.files   = []
+            self.subDirs = []
+
+            for entry in os.listdir(self.path):
+                if os.path.isdir(entry):
+                    self.files.append(entry)
+                    continue
+
+                if os.path.isfile(entry):
+                    self.files.append(entry)
+
+                    # Map files that we may need to search for (e.g. header files)
+
+                    if entry.endswith(".h"):
+                        if entry not in fileToDirectory:
+                            fileToDirectory[entry] = [self]
+                        else:
+                            fileToDirectory[entry].append(self)
+
+        return (self.files, self.subDirs)
+
+def findFile(dirPath, fileName, exclude=None):
+    sys.exit("find file " + fileName + " in directory " + dirPath)
+
+def compileDir(dirPath):
     """
-    Compile all source files found in dirContent
+    Compile all source files found in dirPath and any of its subdirectories
     """
 
-    for file in dirContent:
-        if file.endswith(".c"):
+    os.chdir(dirPath)
+    (files, subDirs) = Directory.fromPath(dirPath).getDirContents()
+
+    for subDir in subDirs:
+        compileDir(os.path.join(dirPath, subDir))
+
+    for entry in files:
+        if entry.endswith(".c"):
             if not os.path.isdir("target"):
                 os.mkdir("target")
 
             try:
-                subprocess.check_output(["cc", "-c", os.path.join(dirName, file), "-o", "target/" + file[:-2] + ".o"],
+                subprocess.check_output(["cc", "-c", os.path.join(dirPath, entry), "-o", "target/" + entry[:-2] + ".o"],
                                          stderr=subprocess.STDOUT)
             except subprocess.CalledProcessError as error:
-                sys.stderr.write(error.output)
-                sys.exit("%s: Failed to compile C file %s/%s" % (__file__, dirName, file))
+                hFiles = []
+
+                for line in error.output.split('\n'):
+                    match = hFilePat.search(line)
+
+                    if not match:
+                        continue
+
+                    hFile = findFile(dirPath, match.group(1))
+
+                    if not hFile:
+                        sys.stderr.write(error.output)
+                        sys.exit("%s: Failed to compile C file %s/%s" % (__file__, dirPath, entry))
+
+                    hFiles.append(hFile)
+
+                if len(hFiles) == 0:
+                    sys.stderr.write(error.output)
+                    sys.exit("%s: Failed to compile C file %s/%s" % (__file__, dirPath, entry))
+
+                sys.exit(hFiles)
 
 # Compile any source files found in the current directory
 
-dirName    = os.path.abspath(".")
-dirContent = os.listdir(".")
-compileFiles(dirName, dirContent)
+dirPath = os.path.abspath(".")
+compileDir(dirPath)
 
 # If there's a test directory, compile all source files in it as well
 
 if os.path.isdir("test"):
-    dirContent = os.listdir("test")
-    compileFiles("test", dirContent)
+    compileDir(os.path.join(dirPath, "test"))
