@@ -5,10 +5,10 @@ import re
 import subprocess
 import sys
 
-doh             = {}
-hFilePat        = re.compile(r'\s(\S+\.h): No such file')
-directories     = {}
-fileToDirectory = {}
+doh               = {}
+directories       = {}
+fileToDirectories = {}
+hFilePat          = re.compile(r'\s(\S+\.h): No such file')
 
 class Directory:
     def __init__(self, path):
@@ -26,11 +26,13 @@ class Directory:
         except KeyError:
             return clazz(path)
 
-    def getDirContents(self):
+    def getContents(self):
         """
         Get contents of directory, caching them, and map include/import file names back to directories
+        @return an ordered pair of lists of files and subdirectories
         """
 
+        #print "getContents " + self.path
         try:
             return (self.files, self.subDirs)
         except AttributeError:
@@ -38,38 +40,79 @@ class Directory:
             self.subDirs = []
 
             for entry in os.listdir(self.path):
-                if os.path.isdir(entry):
-                    self.files.append(entry)
+                entryPath = os.path.join(self.path, entry)
+                #print entryPath
+                if os.path.isdir(entryPath):
+                    self.subDirs.append(entry)
                     continue
 
-                if os.path.isfile(entry):
+                if os.path.isfile(entryPath):
                     self.files.append(entry)
 
                     # Map files that we may need to search for (e.g. header files)
 
                     if entry.endswith(".h"):
-                        if entry not in fileToDirectory:
-                            fileToDirectory[entry] = [self]
+                        if entry not in fileToDirectories:
+                            fileToDirectories[entry] = [self]
                         else:
-                            fileToDirectory[entry].append(self)
+                            fileToDirectories[entry].append(self)
 
         return (self.files, self.subDirs)
 
-def findFile(dirPath, fileName):
+def findFile(dirPath, fileName, exclude=None):
+    """
+    Look for the fileName in all directories under the dirPath, excluding the exclude subdirectory if set or parent if ".."
+    """
+
+    (files, subDirs) = Directory.fromPath(dirPath).getContents()
+    #print "Looking for %s under %s (subDirs=%s)" % (fileName, dirPath, str(subDirs))
+
+    # May be in this directory
     try:
-        return fileToDirectory[fileName].path
+        return fileToDirectories[fileName]
     except KeyError:
+        pass
+
+    # Otherwise, look in all subdirectories
+
+    for subDir in subDirs:
+        if subDir == exclude or subDir == ".git":
+            continue
+
+        findFile(os.path.join(dirPath, subDir), fileName, exclude="..")
+
+    # Return if found
+    try:
+        return fileToDirectories[fileName]
+    except KeyError:
+        pass
+
+    # If we came from the parent, return none
+    if exclude == "..":
         return None
+
+    parent = os.path.dirname(dirPath)
+
+    # Don't leave the user's directory; may want to allow this to be overridden
+    if parent == "/home":
+        return None
+
+    return findFile(parent, fileName, exclude=dirPath)
 
 def compileDir(dirPath):
     """
     Compile all source files found in dirPath and any of its subdirectories
     """
 
+    oldPath = os.getcwd()
     os.chdir(dirPath)
-    (files, subDirs) = Directory.fromPath(dirPath).getDirContents()
+    (files, subDirs) = Directory.fromPath(dirPath).getContents()
+    print "Compiling directory " + dirPath + " files " + str(files) + " subDirs " + str(subDirs)
 
     for subDir in subDirs:
+        if subDir == ".git":
+            continue
+
         compileDir(os.path.join(dirPath, subDir))
 
     for entry in files:
@@ -77,39 +120,54 @@ def compileDir(dirPath):
             if not os.path.isdir("target"):
                 os.mkdir("target")
 
-            try:
-                subprocess.check_output(["cc", "-c", os.path.join(dirPath, entry), "-o", "target/" + entry[:-2] + ".o"],
-                                         stderr=subprocess.STDOUT)
-            except subprocess.CalledProcessError as error:
-                hFiles = []
+            extraIncludeDirs = set()
 
-                for line in error.output.split('\n'):
-                    match = hFilePat.search(line)
+            while True:
+                try:
+                    ccCommand = ["cc", "-c", os.path.join(dirPath, entry), "-o", "target/" + entry[:-2] + ".o"]
 
-                    if not match:
+                    for dir in list(extraIncludeDirs):
+                        ccCommand.extend(["-I", dir.path])
+
+                    subprocess.check_output(ccCommand, stderr=subprocess.STDOUT)
+                    break
+                except subprocess.CalledProcessError as error:
+                    numberOfIncludeDirs = len(extraIncludeDirs)
+
+                    for line in error.output.split('\n'):
+                        match = hFilePat.search(line)
+
+                        if not match:
+                            continue
+
+                        try:
+                            hFile    = match.group(1)
+                            hDirList = fileToDirectories[hFile]
+                        except KeyError:
+                            print "Looking for " + hFile
+                            hDirList = findFile(os.path.dirname(dirPath), hFile, exclude=dirPath)
+
+                        if not hDirList:
+                            sys.stderr.write(error.output)
+                            sys.exit("%s: Failed to find C header file %s included by %s/%s" % (__file__, hFile, dirPath, entry))
+
+                        if len(hDirList) > 1:
+                            sys.stderr.write(error.output)
+                            sys.exit("%s: Found C header file %s included by %s/%s in multiple directories: %s"
+                                    % (__file__, hFile, dirPath, entry, hDirList))
+
+                        extraIncludeDirs.add(hDirList[0])
+
+                    # If at least on additional directory was added, try again
+                    if len(extraIncludeDirs) > numberOfIncludeDirs:
                         continue
 
-                    hFile = findFile(dirPath, match.group(1))
-
-                    if not hFile:
-                        sys.stderr.write(error.output)
-                        sys.exit("%s: Failed to find C header file %s included by %s/%s"
-                                 % (__file__, match.group(1), dirPath, entry))
-
-                    hFiles.append(hFile)
-
-                if len(hFiles) == 0:
                     sys.stderr.write(error.output)
-                    sys.exit("%s: Failed to compile C file %s/%s" % (__file__, dirPath, entry))
+                    sys.exit("%s: Failed to compile C file with: %s" % (__file__, " ".join(ccCommand)))
 
-                sys.exit(hFiles)
+    os.chdir(oldPath)
 
-# Compile any source files found in the current directory
+# Compile any source files found in and under the current directory
 
 dirPath = os.path.abspath(".")
 compileDir(dirPath)
-
-# If there's a test directory, compile all source files in it as well
-
-if os.path.isdir("test"):
-    compileDir(os.path.join(dirPath, "test"))
