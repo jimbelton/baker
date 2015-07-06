@@ -1,11 +1,12 @@
 #!/usr/bin/python
 
+import json
 import os
 import re
 import subprocess
 import sys
 
-doh               = {}
+directoryToDoh    = {}
 directories       = {}
 fileToDirectories = {}
 hFilePat          = re.compile(r'\s(\S+\.h): No such file')
@@ -25,6 +26,9 @@ class Directory:
             return directories[path]
         except KeyError:
             return clazz(path)
+
+    def getRelpath(self, start=os.curdir):
+        return os.path.relpath(self.path, start)
 
     def getContents(self):
         """
@@ -104,6 +108,24 @@ def compileDir(dirPath):
     Compile all source files found in dirPath and any of its subdirectories
     """
 
+    dohDirty = False
+    dohFile  = os.path.join(dirPath, "baker.doh")
+
+    if dirPath not in directoryToDoh:
+        print dohFile
+        if os.path.isfile(dohFile):
+            with open(dohFile) as input:
+                contents = input.read()
+
+                try:
+                    directoryToDoh[dirPath] = json.loads(contents)
+                except ValueError:
+                    sys.exit("%s: Can't understand contents of %s:\n'%s'" % (__file__, dohFile, contents))
+
+        else:
+            directoryToDoh[dirPath] = {}
+
+    dirDoh  = directoryToDoh[dirPath]
     oldPath = os.getcwd()
     os.chdir(dirPath)
     (files, subDirs) = Directory.fromPath(dirPath).getContents()
@@ -120,17 +142,25 @@ def compileDir(dirPath):
             if not os.path.isdir("target"):
                 os.mkdir("target")
 
-            extraIncludeDirs = set()
+            entryIncludeDirsProp = entry + ".includeDirectories"
+            extraIncludeDirs     = set(dirDoh[entryIncludeDirsProp] if entryIncludeDirsProp in dirDoh else [])
 
             while True:
                 try:
                     ccCommand = ["cc", "-c", os.path.join(dirPath, entry), "-o", "target/" + entry[:-2] + ".o"]
 
-                    for dir in list(extraIncludeDirs):
-                        ccCommand.extend(["-I", dir.path])
+                    for incDirPath in list(extraIncludeDirs):
+                        ccCommand.extend(["-I", incDirPath])
 
+                    print "about to " + " ".join(ccCommand)
                     subprocess.check_output(ccCommand, stderr=subprocess.STDOUT)
-                    break
+
+                    if len(extraIncludeDirs) > (len(dirDoh[entryIncludeDirsProp]) if entryIncludeDirsProp in dirDoh else 0):
+                        dirDoh[entryIncludeDirsProp] = list(extraIncludeDirs)
+                        dohDirty                     = True
+
+                    break # Done!
+
                 except subprocess.CalledProcessError as error:
                     numberOfIncludeDirs = len(extraIncludeDirs)
 
@@ -156,7 +186,7 @@ def compileDir(dirPath):
                             sys.exit("%s: Found C header file %s included by %s/%s in multiple directories: %s"
                                     % (__file__, hFile, dirPath, entry, hDirList))
 
-                        extraIncludeDirs.add(hDirList[0])
+                        extraIncludeDirs.add(hDirList[0].getRelpath())
 
                     # If at least on additional directory was added, try again
                     if len(extraIncludeDirs) > numberOfIncludeDirs:
@@ -164,6 +194,11 @@ def compileDir(dirPath):
 
                     sys.stderr.write(error.output)
                     sys.exit("%s: Failed to compile C file with: %s" % (__file__, " ".join(ccCommand)))
+
+    if dohDirty:
+        with open(dohFile, "w") as output:
+            json.dump(directoryToDoh[dirPath], output, sort_keys=True, indent=4, separators=(',', ': '))
+            output.write("\n")
 
     os.chdir(oldPath)
 
