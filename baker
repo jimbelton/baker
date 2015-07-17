@@ -1,12 +1,13 @@
 #!/usr/bin/python
 
-import json
 import os
 import re
 import subprocess
 import sys
 
-directoryToDoh     = {}
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+from baker.doh import Doh
+
 directories        = {}
 fileToDirectories  = {}
 symbolToObjectFile = {}
@@ -112,25 +113,7 @@ def compileSources(dirPath):
     """
     Compile all source files found in dirPath and any of its subdirectories
     """
-
-    dohDirty = False
-    dohFile  = os.path.join(dirPath, "baker.doh")
-
-    if dirPath not in directoryToDoh:
-        print dohFile
-        if os.path.isfile(dohFile):
-            with open(dohFile) as input:
-                contents = input.read()
-
-                try:
-                    directoryToDoh[dirPath] = json.loads(contents)
-                except ValueError:
-                    sys.exit("%s: Can't understand contents of %s:\n'%s'" % (__file__, dohFile, contents))
-
-        else:
-            directoryToDoh[dirPath] = {}
-
-    dirDoh  = directoryToDoh[dirPath]
+    dirDoh  = Doh.fromDirPath(dirPath)
     oldPath = os.getcwd()
     os.chdir(dirPath)
     (files, subDirs) = Directory.fromPath(dirPath).getContents()
@@ -148,7 +131,7 @@ def compileSources(dirPath):
                 os.mkdir("target")
 
             entryIncludeDirsProp = entry + ".includeDirectories"
-            extraIncludeDirs     = set(dirDoh[entryIncludeDirsProp] if entryIncludeDirsProp in dirDoh else [])
+            extraIncludeDirs     = set(dirDoh.getProperty(entryIncludeDirsProp, default=[]))
 
             while True:
                 try:
@@ -160,9 +143,8 @@ def compileSources(dirPath):
                     print "about to " + " ".join(ccCommand)
                     subprocess.check_output(ccCommand, stderr=subprocess.STDOUT)
 
-                    if len(extraIncludeDirs) > (len(dirDoh[entryIncludeDirsProp]) if entryIncludeDirsProp in dirDoh else 0):
-                        dirDoh[entryIncludeDirsProp] = list(extraIncludeDirs)
-                        dohDirty                     = True
+                    if len(extraIncludeDirs) > len(dirDoh.getProperty(entryIncludeDirsProp, default=[])):
+                        dirDoh.set(entryIncludeDirsProp, list(extraIncludeDirs))
 
                     break # Done!
 
@@ -200,22 +182,18 @@ def compileSources(dirPath):
                     sys.stderr.write(error.output)
                     sys.exit("%s: Failed to compile C file with: %s" % (__file__, " ".join(ccCommand)))
 
-    if dohDirty:
-        with open(dohFile, "w") as output:
-            json.dump(directoryToDoh[dirPath], output, sort_keys=True, indent=4, separators=(',', ': '))
-            output.write("\n")
-
+    dirDoh.flushIfDirty()
     os.chdir(oldPath)
 
 def getSymbolsFromObjectFile(objectFileName):
-    symbols = {}
+    symbols = set()
 
     try:
         for line in subprocess.check_output(["nm", "-gp", "--defined-only", objectFileName], stderr=subprocess.STDOUT).split('\n'):
             match = symbolPat.match(line)
 
             if match:
-                symbols[match.group(1)] = objectFileName
+                symbols.add(match.group(1))
 
         return symbols
 
@@ -223,14 +201,27 @@ def getSymbolsFromObjectFile(objectFileName):
         sys.stderr.write(error.output)
         sys.exit("%s: Unable to get symbol names from %s (in directory %s)" % (__file__, objectFileName, os.getcwd()))
 
+def DictOfListsBulkAdd(intoDict, keySet, value):
+    for key in fromDict:
+        if key in intoDict:
+            intoDict[key].add(value)
+        else:
+            intoDict[key] = [value]
+
+def DictOfListsExtend(intoDict, fromDict):
+    for key in fromDict:
+        if key in intoDict:
+            intoDict[key].extend(fromDict[key])
+        else:
+            intoDict[key] = fromDict[key]
+
+undefSymbolPat = re.compile(r': undefined reference to [\'`](\w+)\'')
+
 def linkOrArchiveObjects(dirPath):
     """
     Compile all object files created in dirPath and any of its subdirectories
     """
-
-    dohDirty = False
-    dohFile  = os.path.join(dirPath, "baker.doh")
-    dirDoh   = directoryToDoh[dirPath]
+    dirDoh  = Doh.fromDirPath(dirPath)
     oldPath  = os.getcwd()
 
     try:
@@ -244,25 +235,24 @@ def linkOrArchiveObjects(dirPath):
 
             linkOrArchiveObjects(os.path.join(dirPath, subDir))
 
-        objectFiles     = []
-        programs        = []
-        dirSymbolToFile = {}
+        objectFiles      = []
+        programs         = []
+        dirSymbolToFiles = {}
 
         for entry in files:
             if entry.endswith(".c"):
-                objectFile   = sourceToTargetFileName(entry)
-                symbolToFile = getSymbolsFromObjectFile(objectFile)
+                objectFile = sourceToTargetFileName(entry)
+                symbols    = getSymbolsFromObjectFile(objectFile)
                 objectFiles.append(objectFile)
 
-                if "main" in symbolToFile:
+                if "main" in symbols:
                     programs.append(entry[:-2])
                 else:
-                    dirSymbolToFile.update(symbolToFile)
+                    dictOfListsBulkAdd(dirSymbolToFiles, symbols, objectFile)
 
         # If directory does not contain any programs, archive the objects
         if len(programs) == 0:
-            if len(dirSymbolToFile) == 0:
-                print str(dirSymbolToFile)
+            if len(dirSymbolToFiles) == 0:
                 return None
 
             libName = "target/%s.a" % os.path.basename(dirPath)
@@ -279,24 +269,72 @@ def linkOrArchiveObjects(dirPath):
                 sys.exit("%s: Unable to create library %s from %s" % (__file__, objectFileName))
 
             for symbol in dirSymbolToFile:
-                dirSymbolToFile[symbol] = libName
+                if len(dirSymbolToFiles[symbol]) == 1:
+                    dirSymbolToFiles[symbol] = [libName]
 
-            return dirSymbolToFile
+            return dirSymbolToFiles
 
         # Try to build any programs in the directory
         for program in programs:
             print "Linking program: " + program
-            pass
+
+            while True:
+                try:
+                    ldCommand = ["cc", sourceToTargetFileName(program + ".c"), "-o", "target/" + program]
+
+                    #for incDirPath in list(extraIncludeDirs):
+                    #    ccCommand.extend(["-I", incDirPath])
+
+                    print "about to " + " ".join(ldCommand)
+                    subprocess.check_output(ldCommand, stderr=subprocess.STDOUT)
+
+                    #if len(extraIncludeDirs) > (len(dirDoh[entryIncludeDirsProp]) if entryIncludeDirsProp in dirDoh else 0):
+                    #    dirDoh[entryIncludeDirsProp] = list(extraIncludeDirs)
+                    #    dohDirty                     = True
+
+                    break # Done!
+
+                except subprocess.CalledProcessError as error:
+                    #numberOfIncludeDirs = len(extraIncludeDirs)
+
+                    for line in error.output.split('\n'):
+                        match = undefSymbolPat.search(line)
+
+                        if not match:
+                            continue
+
+                        #print match.group(1)
+
+                        try:
+                            symbol   = match.group(1)
+                            fileList = dirSymbolToFiles[symbol]
+                        except KeyError:
+                            print "Failed to find symbol " + symbol
+                    #        hDirList = findFile(os.path.dirname(dirPath), hFile, exclude=dirPath)
+                    #
+                    #    if not hDirList:
+                    #        sys.stderr.write(error.output)
+                    #        sys.exit("%s: Failed to find C header file %s included by %s/%s" % (__file__, hFile, dirPath, entry))
+                    #
+                    #    if len(hDirList) > 1:
+                    #        sys.stderr.write(error.output)
+                    #        sys.exit("%s: Found C header file %s included by %s/%s in multiple directories: %s"
+                    #                % (__file__, hFile, dirPath, entry, hDirList))
+                    #
+                    #    extraIncludeDirs.add(hDirList[0].getRelpath())
+                    #
+                    ## If at least on additional directory was added, try again
+                    #if len(extraIncludeDirs) > numberOfIncludeDirs:
+                    #    continue
+
+                    sys.stderr.write(error.output)
+                    sys.exit("%s: Failed to link C program with: %s" % (__file__, " ".join(ldCommand)))
 
     except:
         raise
 
     finally:
-        if dohDirty:
-            with open(dohFile, "w") as output:
-                json.dump(directoryToDoh[dirPath], output, sort_keys=True, indent=4, separators=(',', ': '))
-                output.write("\n")
-
+        dirDoh.flushIfDirty()
         os.chdir(oldPath)
 
 # Compile any source files found in and under the current directory, then link any programs and archive any directories with none
