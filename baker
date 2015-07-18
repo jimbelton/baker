@@ -1,5 +1,14 @@
 #!/usr/bin/python
 
+"""baker - build C libraries and programs without a makefile
+
+Usage: baker [-nv]
+
+Options:
+    -n --noaction  Tell what would be done without actually doing it
+    -v --verbose   Tell what is being done
+"""
+
 import os
 import re
 import subprocess
@@ -8,11 +17,11 @@ import sys
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
 from baker.doh import Doh
 
-directories        = {}
-fileToDirectories  = {}
-symbolToObjectFile = {}
-hFilePat           = re.compile(r'\s(\S+\.h): No such file')
-symbolPat          = re.compile(r'[\da-f]+\s+\w\s+(\w+)$')
+directories       = {}
+fileToDirectories = {}
+symbolToFiles     = {}
+hFilePat          = re.compile(r'\s(\S+\.h): No such file')
+symbolPat         = re.compile(r'[\da-f]+\s+\w\s+(\w+)$')
 
 class Directory:
     def __init__(self, path):
@@ -144,7 +153,7 @@ def compileSources(dirPath):
                     subprocess.check_output(ccCommand, stderr=subprocess.STDOUT)
 
                     if len(extraIncludeDirs) > len(dirDoh.getProperty(entryIncludeDirsProp, default=[])):
-                        dirDoh.set(entryIncludeDirsProp, list(extraIncludeDirs))
+                        dirDoh.setProperty(entryIncludeDirsProp, list(extraIncludeDirs))
 
                     break # Done!
 
@@ -201,14 +210,14 @@ def getSymbolsFromObjectFile(objectFileName):
         sys.stderr.write(error.output)
         sys.exit("%s: Unable to get symbol names from %s (in directory %s)" % (__file__, objectFileName, os.getcwd()))
 
-def DictOfListsBulkAdd(intoDict, keySet, value):
-    for key in fromDict:
+def dictOfListsBulkAdd(intoDict, keySet, value):
+    for key in keySet:
         if key in intoDict:
             intoDict[key].add(value)
         else:
             intoDict[key] = [value]
 
-def DictOfListsExtend(intoDict, fromDict):
+def dictOfListsExtend(intoDict, fromDict):
     for key in fromDict:
         if key in intoDict:
             intoDict[key].extend(fromDict[key])
@@ -217,9 +226,83 @@ def DictOfListsExtend(intoDict, fromDict):
 
 undefSymbolPat = re.compile(r': undefined reference to [\'`](\w+)\'')
 
-def linkOrArchiveObjects(dirPath):
+def archiveObjects(dirPath):
     """
-    Compile all object files created in dirPath and any of its subdirectories
+    Archive all object files in dirPath and any of its subdirectories that do not contain programs
+    """
+    dirDoh  = Doh.fromDirPath(dirPath)
+    oldPath  = os.getcwd()
+
+    try:
+        os.chdir(dirPath)
+        (files, subDirs) = Directory.fromPath(dirPath).getContents()
+        print "Linking or archiving directory " + dirPath + " files " + str(files) + " subDirs " + str(subDirs)
+
+        for subDir in subDirs:
+            if subDir == ".git":
+                continue
+
+            archiveObjects(os.path.join(dirPath, subDir))
+
+        objectFiles      = []
+        programs         = []
+        dirSymbolToFiles = {}
+
+        for entry in files:
+            if entry.endswith(".c"):
+                objectFile = sourceToTargetFileName(entry)
+                symbols    = getSymbolsFromObjectFile(objectFile)
+
+                if "main" in symbols:
+                    programs.append(entry[:-2])
+                else:
+                    objectFiles.append(objectFile)
+                    dictOfListsBulkAdd(dirSymbolToFiles, symbols, objectFile)
+
+        # If any new programs were found, update the doh
+        if len(programs) > len(dirDoh.getProperty("programs", [])):
+            dirDoh.setProperty("programs", programs)
+
+        archive = dirDoh.getProperty("archive")
+
+        # If any progam was found and no explicit doh telling baker to make an archive, return
+        if len(programs) > 0 and not archive:
+            return
+
+        if len(dirSymbolToFiles) == 0:
+            return
+
+        if not archive:
+            archive = "target/%s.a" % os.path.basename(dirPath)
+            dirDoh.setProperty("archive", archive)
+
+        if os.path.isfile(archive):
+            os.remove(archive)
+
+        try:
+            arCommand = ["ar", "rc", archive]
+            arCommand.extend(objectFiles)
+            subprocess.check_output(arCommand)
+        except subprocess.CalledProcessError as error:
+            sys.stderr.write(error.output)
+            sys.exit("%s: Unable to create library %s from %s" % (__file__, objectFileName))
+
+        for symbol in dirSymbolToFiles:
+            if len(dirSymbolToFiles[symbol]) == 1:
+                dirSymbolToFiles[symbol] = [archive]
+
+        dictOfListsExtend(symbolToFiles, dirSymbolToFiles)
+
+    except:
+        raise
+
+    finally:
+        dirDoh.flushIfDirty()
+        os.chdir(oldPath)
+
+def linkPrograms(dirPath):
+    """
+    Link all programs in dirPath and any of its subdirectories
     """
     dirDoh  = Doh.fromDirPath(dirPath)
     oldPath  = os.getcwd()
@@ -341,4 +424,5 @@ def linkOrArchiveObjects(dirPath):
 
 dirPath = os.path.abspath(".")
 compileSources(dirPath)
-linkOrArchiveObjects(dirPath)
+archiveObjects(dirPath)
+#linkPrograms(dirPath)

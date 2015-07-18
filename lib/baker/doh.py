@@ -23,7 +23,7 @@ class Doh:
             try:
                 self.properties = json.loads(contents)
             except ValueError:
-                fatal("Can't understand contents of %s:\n'%s'" % (__file__, dohFile, contents))
+                fatal("Can't understand contents of %s:\n'%s'" % (self.filePath, contents))
 
         else:
             self.properties = {}
@@ -55,7 +55,7 @@ class Doh:
     def flushIfDirty(self):
         if self.dirty:
             with open(self.filePath, "w") as output:
-                json.dump(self.properties, sort_keys=True, indent=4, separators=(',', ': '))
+                json.dump(self.properties, output, sort_keys=True, indent=4, separators=(',', ': '))
                 output.write("\n")
 
             self.dirty = False
