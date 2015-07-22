@@ -16,71 +16,15 @@ import sys
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
 from baker.doh import Doh
+from directory import Directory, fileToDirectories
 from docopt    import docopt
 from options   import fatal, setOptions, takeAction
 
 setOptions(docopt(__doc__, version='1.0'))
-#options           = docopt(__doc__, version='1.0')
-directories       = {}
-fileToDirectories = {}
+
 symbolToFiles     = {}
 hFilePat          = re.compile(r'\s(\S+\.h): No such file')
 symbolPat         = re.compile(r'[\da-f]+\s+\w\s+(\w+)$')
-
-class Directory:
-    def __init__(self, path):
-        self.path         = path
-        directories[path] = self
-
-    @classmethod
-    def fromPath(clazz, path):
-        """
-        Get or construct directory object for path
-        """
-
-        try:
-            return directories[path]
-        except KeyError:
-            return clazz(path)
-
-    def getRelpath(self, start=os.curdir):
-        return os.path.relpath(self.path, start)
-
-    def getContents(self):
-        """
-        Get contents of directory, caching them, and map include/import file names back to directories
-        @return an ordered pair of lists of files and subdirectories
-        """
-
-        #print "getContents " + self.path
-        try:
-            return (self.files, self.subDirs)
-        except AttributeError:
-            self.files   = []
-            self.subDirs = []
-
-            for entry in os.listdir(self.path):
-                entryPath = os.path.join(self.path, entry)
-                #print entryPath
-                if os.path.isdir(entryPath):
-                    if entry == ".git":
-                        continue
-
-                    self.subDirs.append(entry)
-                    continue
-
-                if os.path.isfile(entryPath):
-                    self.files.append(entry)
-
-                    # Map files that we may need to search for (e.g. header files)
-
-                    if entry.endswith(".h"):
-                        if entry not in fileToDirectories:
-                            fileToDirectories[entry] = [self]
-                        else:
-                            fileToDirectories[entry].append(self)
-
-        return (self.files, self.subDirs)
 
 def findFile(dirPath, fileName, exclude=None):
     """
@@ -424,6 +368,7 @@ def linkPrograms(dirPath):
 
 # Compile any source files found in and under the current directory, then link any programs and archive any directories with none
 
+Directory.setIndexExp(r'.*\.h$')
 dirPath = os.path.abspath(".")
 compileSources(dirPath)
 archiveObjects(dirPath)
