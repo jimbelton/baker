@@ -16,7 +16,11 @@ import sys
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
 from baker.doh import Doh
+from docopt    import docopt
+from options   import fatal, setOptions, takeAction
 
+setOptions(docopt(__doc__, version='1.0'))
+#options           = docopt(__doc__, version='1.0')
 directories       = {}
 fileToDirectories = {}
 symbolToFiles     = {}
@@ -59,6 +63,9 @@ class Directory:
                 entryPath = os.path.join(self.path, entry)
                 #print entryPath
                 if os.path.isdir(entryPath):
+                    if entry == ".git":
+                        continue
+
                     self.subDirs.append(entry)
                     continue
 
@@ -83,25 +90,19 @@ def findFile(dirPath, fileName, exclude=None):
     (files, subDirs) = Directory.fromPath(dirPath).getContents()
     #print "Looking for %s under %s (subDirs=%s)" % (fileName, dirPath, str(subDirs))
 
-    # May be in this directory
-    try:
-        return fileToDirectories[fileName]
-    except KeyError:
-        pass
-
-    # Otherwise, look in all subdirectories
+    # Look in all subdirectories
 
     for subDir in subDirs:
-        if subDir == exclude or subDir == ".git":
+        if subDir == exclude:
             continue
 
         findFile(os.path.join(dirPath, subDir), fileName, exclude="..")
 
     # Return if found
-    try:
-        return fileToDirectories[fileName]
-    except KeyError:
-        pass
+    directories = fileToDirectories.get(fileName)
+
+    if directories:
+        return directories
 
     # If we came from the parent, return none
     if exclude == "..":
@@ -113,7 +114,7 @@ def findFile(dirPath, fileName, exclude=None):
     if parent == "/home":
         return None
 
-    return findFile(parent, fileName, exclude=dirPath)
+    return findFile(parent, fileName, exclude=os.path.basename(dirPath))
 
 def sourceToTargetFileName(sourceFileName):
     return "target/" + sourceFileName[:-2] + ".o"
@@ -126,12 +127,9 @@ def compileSources(dirPath):
     oldPath = os.getcwd()
     os.chdir(dirPath)
     (files, subDirs) = Directory.fromPath(dirPath).getContents()
-    print "Compiling directory " + dirPath + " files " + str(files) + " subDirs " + str(subDirs)
+    #print "Compiling directory " + dirPath + " files " + str(files) + " subDirs " + str(subDirs)
 
     for subDir in subDirs:
-        if subDir == ".git":
-            continue
-
         compileSources(os.path.join(dirPath, subDir))
 
     for entry in files:
@@ -149,8 +147,8 @@ def compileSources(dirPath):
                     for incDirPath in list(extraIncludeDirs):
                         ccCommand.extend(["-I", incDirPath])
 
-                    print "about to " + " ".join(ccCommand)
-                    subprocess.check_output(ccCommand, stderr=subprocess.STDOUT)
+                    if takeAction(" ".join(ccCommand)):
+                        subprocess.check_output(ccCommand, stderr=subprocess.STDOUT)
 
                     if len(extraIncludeDirs) > len(dirDoh.getProperty(entryIncludeDirsProp, default=[])):
                         dirDoh.setProperty(entryIncludeDirsProp, list(extraIncludeDirs))
@@ -166,21 +164,24 @@ def compileSources(dirPath):
                         if not match:
                             continue
 
-                        try:
-                            hFile    = match.group(1)
-                            hDirList = fileToDirectories[hFile]
-                        except KeyError:
-                            print "Looking for " + hFile
-                            hDirList = findFile(os.path.dirname(dirPath), hFile, exclude=dirPath)
+                        hFile    = match.group(1)
+                        hDirList = fileToDirectories.get(hFile)
+
+                        # May be in the cache
+                        if not hDirList:
+                            hDirList = fileToDirectories.get(hFile)
+
+                        if not hDirList:
+                            hDirList = findFile(os.path.dirname(dirPath), hFile, exclude=os.path.basename(dirPath))
 
                         if not hDirList:
                             sys.stderr.write(error.output)
-                            sys.exit("%s: Failed to find C header file %s included by %s/%s" % (__file__, hFile, dirPath, entry))
+                            fatal("Failed to find C header file %s included by %s/%s" % (hFile, dirPath, entry))
 
                         if len(hDirList) > 1:
                             sys.stderr.write(error.output)
-                            sys.exit("%s: Found C header file %s included by %s/%s in multiple directories: %s"
-                                    % (__file__, hFile, dirPath, entry, hDirList))
+                            fatal("Found C header file %s included by %s/%s exists in multiple directories: %s"
+                                    % (hFile, dirPath, entry, hDirList))
 
                         extraIncludeDirs.add(hDirList[0].getRelpath())
 
@@ -189,7 +190,7 @@ def compileSources(dirPath):
                         continue
 
                     sys.stderr.write(error.output)
-                    sys.exit("%s: Failed to compile C file with: %s" % (__file__, " ".join(ccCommand)))
+                    fatal("Failed to compile C file with: %s" % (" ".join(ccCommand)))
 
     dirDoh.flushIfDirty()
     os.chdir(oldPath)
@@ -208,7 +209,7 @@ def getSymbolsFromObjectFile(objectFileName):
 
     except subprocess.CalledProcessError as error:
         sys.stderr.write(error.output)
-        sys.exit("%s: Unable to get symbol names from %s (in directory %s)" % (__file__, objectFileName, os.getcwd()))
+        fatal("Unable to get symbol names from %s (in directory %s)" % (objectFileName, os.getcwd()))
 
 def dictOfListsBulkAdd(intoDict, keySet, value):
     for key in keySet:
@@ -235,13 +236,11 @@ def archiveObjects(dirPath):
 
     try:
         os.chdir(dirPath)
-        (files, subDirs) = Directory.fromPath(dirPath).getContents()
-        print "Linking or archiving directory " + dirPath + " files " + str(files) + " subDirs " + str(subDirs)
+        directory        = Directory.fromPath(dirPath)
+        (files, subDirs) = directory.getContents()
+        #print "Archiving directory " + dirPath + " files " + str(files) + " subDirs " + str(subDirs)
 
         for subDir in subDirs:
-            if subDir == ".git":
-                continue
-
             archiveObjects(os.path.join(dirPath, subDir))
 
         objectFiles      = []
@@ -267,6 +266,7 @@ def archiveObjects(dirPath):
 
         # If any progam was found and no explicit doh telling baker to make an archive, return
         if len(programs) > 0 and not archive:
+            directory.symbolToFiles = dirSymbolToFiles
             return
 
         if len(dirSymbolToFiles) == 0:
@@ -282,10 +282,12 @@ def archiveObjects(dirPath):
         try:
             arCommand = ["ar", "rc", archive]
             arCommand.extend(objectFiles)
-            subprocess.check_output(arCommand)
+
+            if takeAction(" ".join(arCommand)):
+                subprocess.check_output(arCommand)
         except subprocess.CalledProcessError as error:
             sys.stderr.write(error.output)
-            sys.exit("%s: Unable to create library %s from %s" % (__file__, objectFileName))
+            fatal("Unable to create library %s from %s" % (objectFileName))
 
         for symbol in dirSymbolToFiles:
             if len(dirSymbolToFiles[symbol]) == 1:
@@ -300,85 +302,82 @@ def archiveObjects(dirPath):
         dirDoh.flushIfDirty()
         os.chdir(oldPath)
 
+def findSymbol(dirPath, symbol, exclude=None):
+    """
+    Look for the symbols in all directories under the dirPath, excluding the exclude subdirectory if set or parent if ".."
+    """
+
+    (files, subDirs) = Directory.fromPath(dirPath).getContents()
+    print "Looking for %s under %s (subDirs=%s)" % (symbol, dirPath, str(subDirs))
+
+    # Look in all subdirectories
+
+    for subDir in subDirs:
+        if subDir == exclude:
+            continue
+
+        findSymbol(os.path.join(dirPath, subDir), symbol, exclude="..")
+
+    # Return if found
+
+    files = symbolToFiles.get(symbol)
+
+    if files:
+        return files
+
+    # If we came from the parent, return none
+    if exclude == "..":
+        return None
+
+    parent = os.path.dirname(dirPath)
+
+    # Don't leave the user's directory; may want to allow this to be overridden
+    if parent == "/home":
+        return None
+
+    return findSymbol(parent, symbol, exclude=os.path.basename(dirPath))
+
 def linkPrograms(dirPath):
     """
     Link all programs in dirPath and any of its subdirectories
     """
     dirDoh  = Doh.fromDirPath(dirPath)
-    oldPath  = os.getcwd()
+    oldPath = os.getcwd()
 
     try:
         os.chdir(dirPath)
-        (files, subDirs) = Directory.fromPath(dirPath).getContents()
-        print "Linking or archiving directory " + dirPath + " files " + str(files) + " subDirs " + str(subDirs)
+        directory        = Directory.fromPath(dirPath)
+        (files, subDirs) = directory.getContents()
+        programs         = dirDoh.getProperty("programs", [])
+        #print "Linking programs in directory " + dirPath + " files " + str(files) + " subDirs " + str(subDirs)
 
         for subDir in subDirs:
-            if subDir == ".git":
-                continue
-
-            linkOrArchiveObjects(os.path.join(dirPath, subDir))
-
-        objectFiles      = []
-        programs         = []
-        dirSymbolToFiles = {}
-
-        for entry in files:
-            if entry.endswith(".c"):
-                objectFile = sourceToTargetFileName(entry)
-                symbols    = getSymbolsFromObjectFile(objectFile)
-                objectFiles.append(objectFile)
-
-                if "main" in symbols:
-                    programs.append(entry[:-2])
-                else:
-                    dictOfListsBulkAdd(dirSymbolToFiles, symbols, objectFile)
-
-        # If directory does not contain any programs, archive the objects
-        if len(programs) == 0:
-            if len(dirSymbolToFiles) == 0:
-                return None
-
-            libName = "target/%s.a" % os.path.basename(dirPath)
-
-            if os.path.isfile(libName):
-                os.remove(libName)
-
-            try:
-                arCommand = ["ar", "rc", libName]
-                arCommand.extend(objectFiles)
-                subprocess.check_output(arCommand)
-            except subprocess.CalledProcessError as error:
-                sys.stderr.write(error.output)
-                sys.exit("%s: Unable to create library %s from %s" % (__file__, objectFileName))
-
-            for symbol in dirSymbolToFile:
-                if len(dirSymbolToFiles[symbol]) == 1:
-                    dirSymbolToFiles[symbol] = [libName]
-
-            return dirSymbolToFiles
+            linkPrograms(os.path.join(dirPath, subDir))
 
         # Try to build any programs in the directory
         for program in programs:
             print "Linking program: " + program
+            extraObjectFilesProp = program + ".extraObjectFiles"
+            extraObjectFiles     = set(dirDoh.getProperty(extraObjectFilesProp, []))
 
             while True:
                 try:
                     ldCommand = ["cc", sourceToTargetFileName(program + ".c"), "-o", "target/" + program]
 
-                    #for incDirPath in list(extraIncludeDirs):
-                    #    ccCommand.extend(["-I", incDirPath])
+                    for objectFile in list(extraObjectFiles):
+                        ccCommand.add(objectFile)
 
-                    print "about to " + " ".join(ldCommand)
-                    subprocess.check_output(ldCommand, stderr=subprocess.STDOUT)
+                    if takeAction(" ".join(ldCommand)):
+                        subprocess.check_output(ldCommand, stderr=subprocess.STDOUT)
 
-                    #if len(extraIncludeDirs) > (len(dirDoh[entryIncludeDirsProp]) if entryIncludeDirsProp in dirDoh else 0):
-                    #    dirDoh[entryIncludeDirsProp] = list(extraIncludeDirs)
-                    #    dohDirty                     = True
+                    if len(extraObjectFiles) > len(dirDoh.getProperty(extraObjectFilesProp, [])):
+                        dirDoh.setProperty(entryIncludeDirsProp, list(extraIncludeDirs))
 
                     break # Done!
 
                 except subprocess.CalledProcessError as error:
-                    #numberOfIncludeDirs = len(extraIncludeDirs)
+                    numberOfObjectFiles = len(extraObjectFiles)
+                    undefinedSymbols    = []
 
                     for line in error.output.split('\n'):
                         match = undefSymbolPat.search(line)
@@ -386,32 +385,35 @@ def linkPrograms(dirPath):
                         if not match:
                             continue
 
-                        #print match.group(1)
+                        undefinedSymbols.append(match.group(1))
 
-                        try:
-                            symbol   = match.group(1)
-                            fileList = dirSymbolToFiles[symbol]
-                        except KeyError:
-                            print "Failed to find symbol " + symbol
-                    #        hDirList = findFile(os.path.dirname(dirPath), hFile, exclude=dirPath)
-                    #
-                    #    if not hDirList:
-                    #        sys.stderr.write(error.output)
-                    #        sys.exit("%s: Failed to find C header file %s included by %s/%s" % (__file__, hFile, dirPath, entry))
-                    #
-                    #    if len(hDirList) > 1:
-                    #        sys.stderr.write(error.output)
-                    #        sys.exit("%s: Found C header file %s included by %s/%s in multiple directories: %s"
-                    #                % (__file__, hFile, dirPath, entry, hDirList))
-                    #
-                    #    extraIncludeDirs.add(hDirList[0].getRelpath())
-                    #
-                    ## If at least on additional directory was added, try again
-                    #if len(extraIncludeDirs) > numberOfIncludeDirs:
-                    #    continue
+                    for symbol in undefinedSymbols:
+                        # First, look in any object files in the same directory
+                        oFileList = directory.symbolToFiles.get(symbol)
 
-                    sys.stderr.write(error.output)
-                    sys.exit("%s: Failed to link C program with: %s" % (__file__, " ".join(ldCommand)))
+                        # May be in the cache
+                        if not oFileList:
+                            oFileList = symbolToFiles.get(symbol)
+
+                        # Look in higher level directories for archives
+                        if not oFileList:
+                            oFileList = findSymbol(os.path.dirname(dirPath), symbol, exclude=os.path.basename(dirPath))
+
+                        if not oFileList:
+                            sys.stderr.write(error.output)
+                            fatal("Failed to find symbol %s needed by %s in %s" % (hFile, program, dirPath))
+
+                        if len(oFileList) > 1:
+                            sys.stderr.write(error.output)
+                            fatal("Found symbol %s needed by %s in %s in multiple files: %s"
+                                  % (symbol, program, dirPath, oFuileList))
+
+                        extraObjectFiles.add(oFileList[0].getRelpath())
+
+                    # If no additional object files were added, fail
+                    if len(extraObjectFiles) <= numberOfObjectFiles:
+                        sys.stderr.write(error.output)
+                        fatal("Failed to link C program with: %s" % (" ".join(ldCommand)))
 
     except:
         raise
@@ -425,4 +427,4 @@ def linkPrograms(dirPath):
 dirPath = os.path.abspath(".")
 compileSources(dirPath)
 archiveObjects(dirPath)
-#linkPrograms(dirPath)
+linkPrograms(dirPath)

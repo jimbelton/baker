@@ -10,6 +10,10 @@ def getOption(name, default = None):
 
     return default
 
+def setOptions(opts):
+    for opt in opts:
+        options[opt if opt[0:2] != "--" else opt[2:]] = opts[opt]
+
 def formatMessage(type, message, file, line):
     output = [main.__file__, ": "] if getOption("identify", False) else []
 
