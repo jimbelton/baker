@@ -22,9 +22,10 @@ from options   import fatal, setOptions, takeAction
 
 setOptions(docopt(__doc__, version='1.0'))
 
-symbolToFiles     = {}
-hFilePat          = re.compile(r'\s(\S+\.h): No such file')
-symbolPat         = re.compile(r'[\da-f]+\s+\w\s+(\w+)$')
+startDirPath   = os.path.abspath(".")
+symbolToFiles  = {}
+hFilePat       = re.compile(r'\s(\S+\.h): No such file')
+symbolPat      = re.compile(r'[\da-f]+\s+\w\s+(\w+)$')
 
 def findFile(dirPath, fileName, exclude=None):
     """
@@ -158,7 +159,7 @@ def getSymbolsFromObjectFile(objectFileName):
 def dictOfListsBulkAdd(intoDict, keySet, value):
     for key in keySet:
         if key in intoDict:
-            intoDict[key].add(value)
+            intoDict[key].append(value)
         else:
             intoDict[key] = [value]
 
@@ -235,7 +236,7 @@ def archiveObjects(dirPath):
 
         for symbol in dirSymbolToFiles:
             if len(dirSymbolToFiles[symbol]) == 1:
-                dirSymbolToFiles[symbol] = [archive]
+                dirSymbolToFiles[symbol] = [os.path.join(dirPath, archive)]
 
         dictOfListsExtend(symbolToFiles, dirSymbolToFiles)
 
@@ -251,6 +252,14 @@ def findSymbol(dirPath, symbol, exclude=None):
     Look for the symbols in all directories under the dirPath, excluding the exclude subdirectory if set or parent if ".."
     """
 
+    directory = Directory.fromPath(dirPath)
+
+    try:
+        if directory.symbolsIndexed:
+            return None
+    except AttributeError:
+        pass
+
     (files, subDirs) = Directory.fromPath(dirPath).getContents()
     print "Looking for %s under %s (subDirs=%s)" % (symbol, dirPath, str(subDirs))
 
@@ -262,12 +271,22 @@ def findSymbol(dirPath, symbol, exclude=None):
 
         findSymbol(os.path.join(dirPath, subDir), symbol, exclude="..")
 
+    # If there are any libraries in the current directory, map them
+
+    for file in files:
+        if file.endswith(".a"):
+            filePath = os.path.join(dirPath, file)
+            symbols  = getSymbolsFromObjectFile(filePath)
+            dictOfListsBulkAdd(symbolToFiles, symbols, filePath)
+
+    directory.symbolsIndexed = True
+
     # Return if found
 
-    files = symbolToFiles.get(symbol)
+    foundFiles = symbolToFiles.get(symbol)
 
-    if files:
-        return files
+    if foundFiles:
+        return foundFiles
 
     # If we came from the parent, return none
     if exclude == "..":
@@ -285,8 +304,9 @@ def linkPrograms(dirPath):
     """
     Link all programs in dirPath and any of its subdirectories
     """
-    dirDoh  = Doh.fromDirPath(dirPath)
-    oldPath = os.getcwd()
+    dirDoh              = Doh.fromDirPath(dirPath)
+    preferredLibrarySet = dirDoh.getProperty("preferredLibraries")
+    oldPath             = os.getcwd()
 
     try:
         os.chdir(dirPath)
@@ -300,22 +320,22 @@ def linkPrograms(dirPath):
 
         # Try to build any programs in the directory
         for program in programs:
-            print "Linking program: " + program
-            extraObjectFilesProp = program + ".extraObjectFiles"
-            extraObjectFiles     = set(dirDoh.getProperty(extraObjectFilesProp, []))
+            #print "Linking program: " + program
+            programObjectFilesProp = program + ".objectFiles"
+            extraObjectFiles       = set(dirDoh.getProperty(programObjectFilesProp, []))
 
             while True:
                 try:
                     ldCommand = ["cc", sourceToTargetFileName(program + ".c"), "-o", "target/" + program]
 
                     for objectFile in list(extraObjectFiles):
-                        ccCommand.add(objectFile)
+                        ldCommand.append(objectFile)
 
                     if takeAction(" ".join(ldCommand)):
                         subprocess.check_output(ldCommand, stderr=subprocess.STDOUT)
 
-                    if len(extraObjectFiles) > len(dirDoh.getProperty(extraObjectFilesProp, [])):
-                        dirDoh.setProperty(entryIncludeDirsProp, list(extraIncludeDirs))
+                    if len(extraObjectFiles) > len(dirDoh.getProperty(programObjectFilesProp, [])):
+                        dirDoh.setProperty(programObjectFilesProp, list(extraObjectFiles))
 
                     break # Done!
 
@@ -341,18 +361,25 @@ def linkPrograms(dirPath):
 
                         # Look in higher level directories for archives
                         if not oFileList:
-                            oFileList = findSymbol(os.path.dirname(dirPath), symbol, exclude=os.path.basename(dirPath))
+                            oFileList = findSymbol(os.path.dirname(startDirPath), symbol, exclude=os.path.basename(startDirPath))
 
                         if not oFileList:
                             sys.stderr.write(error.output)
                             fatal("Failed to find symbol %s needed by %s in %s" % (hFile, program, dirPath))
 
                         if len(oFileList) > 1:
-                            sys.stderr.write(error.output)
-                            fatal("Found symbol %s needed by %s in %s in multiple files: %s"
-                                  % (symbol, program, dirPath, oFuileList))
+                            if (preferredLibrarySet):
+                                for oFile in oFileList:
+                                    if os.path.basename(oFile) in preferredLibrarySet:
+                                        oFileList = [oFile]
+                                        break
 
-                        extraObjectFiles.add(oFileList[0].getRelpath())
+                            if len(oFileList) > 1:
+                                sys.stderr.write(error.output)
+                                fatal("Found symbol %s needed by %s in %s in multiple files: %s"
+                                      % (symbol, program, dirPath, oFileList))
+
+                        extraObjectFiles.add(os.path.relpath(oFileList[0]))
 
                     # If no additional object files were added, fail
                     if len(extraObjectFiles) <= numberOfObjectFiles:
@@ -369,7 +396,6 @@ def linkPrograms(dirPath):
 # Compile any source files found in and under the current directory, then link any programs and archive any directories with none
 
 Directory.setIndexExp(r'.*\.h$')
-dirPath = os.path.abspath(".")
-compileSources(dirPath)
-archiveObjects(dirPath)
-linkPrograms(dirPath)
+compileSources(startDirPath)
+archiveObjects(startDirPath)
+linkPrograms(startDirPath)

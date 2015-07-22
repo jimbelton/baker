@@ -1,6 +1,5 @@
 import sys
 import __main__ as main
-print(main.__file__)
 
 options = {}
 
