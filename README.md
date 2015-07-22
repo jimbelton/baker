@@ -29,7 +29,14 @@ Run baker -h for help:
 
 ## Working With Doh
 
-You can tweak some of the values in the *baker.doh* files to deal with special cases. More on that in future versions.
+You can tweak some of the values in the *baker.doh* files to deal with special cases.
+
+Property           | Tyoe | Description
+------------------ | ---- | -----------
+preferredLibraries | list | List of directory filenames that will be preferred if there is more than one containing a required symbol
+
+More will be added in future versions.
+
 
 ## Copyright and License
 
