@@ -2,10 +2,11 @@
 
 """baker - build C libraries and programs without a makefile
 
-Usage: baker [-nv]
+Usage: baker [-ntv]
 
 Options:
     -n --noaction  Tell what would be done without actually doing it
+    -t --test      Run any test programs found
     -v --verbose   Tell what is being done
 """
 
@@ -18,7 +19,7 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
 from baker.doh import Doh
 from directory import Directory, fileToDirectories
 from docopt    import docopt
-from options   import fatal, setOptions, takeAction
+from options   import error, fatal, getOption, setOptions, takeAction
 
 setOptions(docopt(__doc__, version='1.0'))
 
@@ -26,6 +27,7 @@ startDirPath   = os.path.abspath(".")
 symbolToFiles  = {}
 hFilePat       = re.compile(r'\s(\S+\.h): No such file')
 symbolPat      = re.compile(r'[\da-f]+\s+\w\s+(\w+)$')
+testPat        = re.compile(r'test')
 
 def findFile(dirPath, fileName, exclude=None):
     """
@@ -100,10 +102,10 @@ def compileSources(dirPath):
 
                     break # Done!
 
-                except subprocess.CalledProcessError as error:
+                except subprocess.CalledProcessError as exception:
                     numberOfIncludeDirs = len(extraIncludeDirs)
 
-                    for line in error.output.split('\n'):
+                    for line in exception.output.split('\n'):
                         match = hFilePat.search(line)
 
                         if not match:
@@ -120,11 +122,11 @@ def compileSources(dirPath):
                             hDirList = findFile(os.path.dirname(dirPath), hFile, exclude=os.path.basename(dirPath))
 
                         if not hDirList:
-                            sys.stderr.write(error.output)
+                            sys.stderr.write(exception.output)
                             fatal("Failed to find C header file %s included by %s/%s" % (hFile, dirPath, entry))
 
                         if len(hDirList) > 1:
-                            sys.stderr.write(error.output)
+                            sys.stderr.write(exception.output)
                             fatal("Found C header file %s included by %s/%s exists in multiple directories: %s"
                                     % (hFile, dirPath, entry, hDirList))
 
@@ -134,7 +136,7 @@ def compileSources(dirPath):
                     if len(extraIncludeDirs) > numberOfIncludeDirs:
                         continue
 
-                    sys.stderr.write(error.output)
+                    sys.stderr.write(exception.output)
                     fatal("Failed to compile C file with: %s" % (" ".join(ccCommand)))
 
     dirDoh.flushIfDirty()
@@ -152,8 +154,8 @@ def getSymbolsFromObjectFile(objectFileName):
 
         return symbols
 
-    except subprocess.CalledProcessError as error:
-        sys.stderr.write(error.output)
+    except subprocess.CalledProcessError as exception:
+        sys.stderr.write(exception.output)
         fatal("Unable to get symbol names from %s (in directory %s)" % (objectFileName, os.getcwd()))
 
 def dictOfListsBulkAdd(intoDict, keySet, value):
@@ -230,8 +232,8 @@ def archiveObjects(dirPath):
 
             if takeAction(" ".join(arCommand)):
                 subprocess.check_output(arCommand)
-        except subprocess.CalledProcessError as error:
-            sys.stderr.write(error.output)
+        except subprocess.CalledProcessError as exception:
+            sys.stderr.write(exception.output)
             fatal("Unable to create library %s from %s" % (objectFileName))
 
         for symbol in dirSymbolToFiles:
@@ -339,11 +341,11 @@ def linkPrograms(dirPath):
 
                     break # Done!
 
-                except subprocess.CalledProcessError as error:
+                except subprocess.CalledProcessError as exception:
                     numberOfObjectFiles = len(extraObjectFiles)
                     undefinedSymbols    = []
 
-                    for line in error.output.split('\n'):
+                    for line in exception.output.split('\n'):
                         match = undefSymbolPat.search(line)
 
                         if not match:
@@ -364,7 +366,7 @@ def linkPrograms(dirPath):
                             oFileList = findSymbol(os.path.dirname(startDirPath), symbol, exclude=os.path.basename(startDirPath))
 
                         if not oFileList:
-                            sys.stderr.write(error.output)
+                            sys.stderr.write(exception.output)
                             fatal("Failed to find symbol %s needed by %s in %s" % (hFile, program, dirPath))
 
                         if len(oFileList) > 1:
@@ -375,7 +377,7 @@ def linkPrograms(dirPath):
                                         break
 
                             if len(oFileList) > 1:
-                                sys.stderr.write(error.output)
+                                sys.stderr.write(exception.output)
                                 fatal("Found symbol %s needed by %s in %s in multiple files: %s"
                                       % (symbol, program, dirPath, oFileList))
 
@@ -383,8 +385,18 @@ def linkPrograms(dirPath):
 
                     # If no additional object files were added, fail
                     if len(extraObjectFiles) <= numberOfObjectFiles:
-                        sys.stderr.write(error.output)
+                        sys.stderr.write(exception.output)
                         fatal("Failed to link C program with: %s" % (" ".join(ldCommand)))
+
+            if getOption("test") and testPat.match(program) and takeAction("run " + program):
+                try:
+                    output = subprocess.check_output(["target/" + program], stderr=subprocess.STDOUT)
+
+                    if getOption("verbose"):
+                        sys.stdout.write(output)
+                except subprocess.CalledProcessError as exception:
+                    sys.stderr.write(exception.output)
+                    error("Test failure in program " + program)
 
     except:
         raise
