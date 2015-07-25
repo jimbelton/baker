@@ -24,8 +24,12 @@ path. Go to the directory you want to compile and type "baker"
 ## Options
 
 Run baker -h for help:
- * -n => no action. Baker tells you what commands it would run, but doesn't actually build the code
- * -v => verbose. Outputs addition information.
+
+Option | Long Option | Description
+------ | ----------- | -----------
+    -n | --noaction  | Tells you what commands would be run, but doesn't actually build the code
+    -t | --test      | Run any program whose name begins with "test". If -n is specified, tell what would be run. 
+    -v | --verbose   | Output addition information
 
 ## Working With Doh
 
