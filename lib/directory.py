@@ -11,10 +11,9 @@ class Directory:
         directories[path] = self
 
     @classmethod
-    def fromPath(clazz, path, indexExp=None):
+    def fromPath(clazz, path):
         """
-        Get or construct directory object for path
-        @param
+        Construct or return a cached directory object for the path
         """
 
         try:
@@ -39,7 +38,7 @@ class Directory:
 
             for entry in os.listdir(self.path):
                 entryPath = os.path.join(self.path, entry)
-                #print entryPath
+
                 if os.path.isdir(entryPath):
                     if entry == ".git":
                         continue
@@ -62,6 +61,8 @@ class Directory:
 
     @classmethod
     def setIndexExp(clazz, regExp):
+        """
+        Set a regular expression for which all matching filenames will be indexed
+        """
+        global indexPat
         indexPat = re.compile(regExp)
-
-

@@ -12,6 +12,8 @@ Options:
 
 import os
 import re
+import resource
+import signal
 import subprocess
 import sys
 
@@ -35,7 +37,7 @@ def findFile(dirPath, fileName, exclude=None):
     """
 
     (files, subDirs) = Directory.fromPath(dirPath).getContents()
-    #print "Looking for %s under %s (subDirs=%s)" % (fileName, dirPath, str(subDirs))
+    #print "Looking for %s under %s (subDirs=%s, files=%s)" % (fileName, dirPath, str(subDirs), str(files))
 
     # Look in all subdirectories
 
@@ -89,7 +91,7 @@ def compileSources(dirPath):
 
             while True:
                 try:
-                    ccCommand = ["cc", "-c", os.path.join(dirPath, entry), "-o", sourceToTargetFileName(entry)]
+                    ccCommand = ["cc", "-O3", "-c", os.path.join(dirPath, entry), "-o", sourceToTargetFileName(entry)]
 
                     for incDirPath in list(extraIncludeDirs):
                         ccCommand.extend(["-I", incDirPath])
@@ -263,7 +265,7 @@ def findSymbol(dirPath, symbol, exclude=None):
         pass
 
     (files, subDirs) = Directory.fromPath(dirPath).getContents()
-    print "Looking for %s under %s (subDirs=%s)" % (symbol, dirPath, str(subDirs))
+    #print "Looking for %s under %s (subDirs=%s)" % (symbol, dirPath, str(subDirs))
 
     # Look in all subdirectories
 
@@ -324,20 +326,20 @@ def linkPrograms(dirPath):
         for program in programs:
             #print "Linking program: " + program
             programObjectFilesProp = program + ".objectFiles"
-            extraObjectFiles       = set(dirDoh.getProperty(programObjectFilesProp, []))
+            extraObjectFiles       = dirDoh.getProperty(programObjectFilesProp, [])
 
             while True:
                 try:
                     ldCommand = ["cc", sourceToTargetFileName(program + ".c"), "-o", "target/" + program]
 
-                    for objectFile in list(extraObjectFiles):
+                    for objectFile in extraObjectFiles:
                         ldCommand.append(objectFile)
 
                     if takeAction(" ".join(ldCommand)):
                         subprocess.check_output(ldCommand, stderr=subprocess.STDOUT)
 
                     if len(extraObjectFiles) > len(dirDoh.getProperty(programObjectFilesProp, [])):
-                        dirDoh.setProperty(programObjectFilesProp, list(extraObjectFiles))
+                        dirDoh.setProperty(programObjectFilesProp, extraObjectFiles)
 
                     break # Done!
 
@@ -381,7 +383,7 @@ def linkPrograms(dirPath):
                                 fatal("Found symbol %s needed by %s in %s in multiple files: %s"
                                       % (symbol, program, dirPath, oFileList))
 
-                        extraObjectFiles.add(os.path.relpath(oFileList[0]))
+                        extraObjectFiles.append(os.path.relpath(oFileList[0]))
 
                     # If no additional object files were added, fail
                     if len(extraObjectFiles) <= numberOfObjectFiles:
@@ -390,12 +392,19 @@ def linkPrograms(dirPath):
 
             if getOption("test") and testPat.match(program) and takeAction("run " + program):
                 try:
+                    rlimitsCore = resource.getrlimit(resource.RLIMIT_CORE)
+                    resource.setrlimit(resource.RLIMIT_CORE, (-1, -1))
                     output = subprocess.check_output(["target/" + program], stderr=subprocess.STDOUT)
+                    resource.setrlimit(resource.RLIMIT_CORE, rlimitsCore)
 
                     if getOption("verbose"):
                         sys.stdout.write(output)
                 except subprocess.CalledProcessError as exception:
                     sys.stderr.write(exception.output)
+
+                    if exception.returncode == -signal.SIGSEGV:
+                        fatal("Test program %s was killed with a segmentation fault" % program)
+
                     error("Test failure in program " + program)
 
     except:
@@ -407,7 +416,7 @@ def linkPrograms(dirPath):
 
 # Compile any source files found in and under the current directory, then link any programs and archive any directories with none
 
-Directory.setIndexExp(r'.*\.h$')
+Directory.setIndexExp(r'.+\.h$')
 compileSources(startDirPath)
 archiveObjects(startDirPath)
 linkPrograms(startDirPath)
