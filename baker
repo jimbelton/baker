@@ -88,6 +88,7 @@ def compileSources(dirPath):
 
             entryIncludeDirsProp = entry + ".includeDirectories"
             extraIncludeDirs     = set(dirDoh.getProperty(entryIncludeDirsProp, default=[]))
+            lenExtraIncludeDirs  = len(extraIncludeDirs)
 
             while True:
                 try:
@@ -99,7 +100,9 @@ def compileSources(dirPath):
                     if takeAction(" ".join(ccCommand)):
                         subprocess.check_output(ccCommand, stderr=subprocess.STDOUT)
 
-                    if len(extraIncludeDirs) > len(dirDoh.getProperty(entryIncludeDirsProp, default=[])):
+                    # If the include path has grown, update the doh
+                    #
+                    if len(extraIncludeDirs) > lenExtraIncludeDirs:
                         dirDoh.setProperty(entryIncludeDirsProp, list(extraIncludeDirs))
 
                     break # Done!
@@ -327,6 +330,7 @@ def linkPrograms(dirPath):
             #print "Linking program: " + program
             programObjectFilesProp = program + ".objectFiles"
             extraObjectFiles       = dirDoh.getProperty(programObjectFilesProp, [])
+            lenExtraObjectFiles    = len(extraObjectFiles)
 
             while True:
                 try:
@@ -338,7 +342,9 @@ def linkPrograms(dirPath):
                     if takeAction(" ".join(ldCommand)):
                         subprocess.check_output(ldCommand, stderr=subprocess.STDOUT)
 
-                    if len(extraObjectFiles) > len(dirDoh.getProperty(programObjectFilesProp, [])):
+                    # If the number of object files has grown, update the doh
+                    #
+                    if len(extraObjectFiles) > lenExtraObjectFiles:
                         dirDoh.setProperty(programObjectFilesProp, extraObjectFiles)
 
                     break # Done!
