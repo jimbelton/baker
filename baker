@@ -18,10 +18,11 @@ import subprocess
 import sys
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
-from baker.doh import Doh
-from directory import Directory, fileToDirectories
-from docopt    import docopt
-from options   import error, fatal, getOption, setOptions, takeAction
+from baker.doh  import Doh
+from directory  import Directory, fileToDirectories
+from docopt     import docopt
+from options    import error, fatal, getOption, setOptions, takeAction
+from OrderedSet import OrderedSet
 
 setOptions(docopt(__doc__, version='1.0'))
 
@@ -72,8 +73,9 @@ def compileSources(dirPath):
     """
     Compile all source files found in dirPath and any of its subdirectories
     """
-    dirDoh  = Doh.fromDirPath(dirPath)
-    oldPath = os.getcwd()
+    dirDoh                  = Doh.fromDirPath(dirPath)
+    preferredIncludeDirExps = dirDoh.getProperty("preferredIncludeDirExps")
+    oldPath                 = os.getcwd()
     os.chdir(dirPath)
     (files, subDirs) = Directory.fromPath(dirPath).getContents()
     #print "Compiling directory " + dirPath + " files " + str(files) + " subDirs " + str(subDirs)
@@ -131,9 +133,21 @@ def compileSources(dirPath):
                             fatal("Failed to find C header file %s included by %s/%s" % (hFile, dirPath, entry))
 
                         if len(hDirList) > 1:
-                            sys.stderr.write(exception.output)
-                            fatal("Found C header file %s included by %s/%s exists in multiple directories: %s"
-                                    % (hFile, dirPath, entry, hDirList))
+                            if (preferredIncludeDirExps):
+                                print str(preferredIncludeDirExps)
+                                for hDir in hDirList:
+                                    for exp in preferredIncludeDirExps:
+                                        if re.match(exp, hDir.path):
+                                            hDirList = [hDir]
+                                            break
+
+                                    if len(hDirList) == 1:
+                                        break
+
+                            if len(hDirList) > 1:
+                                sys.stderr.write(exception.output)
+                                fatal("Found C header file %s included by %s/%s exists in multiple directories: %s"
+                                        % (hFile, dirPath, entry, [hDir.path for hDir in hDirList]))
 
                         extraIncludeDirs.add(hDirList[0].getRelpath())
 
@@ -312,7 +326,7 @@ def linkPrograms(dirPath):
     Link all programs in dirPath and any of its subdirectories
     """
     dirDoh              = Doh.fromDirPath(dirPath)
-    preferredLibrarySet = dirDoh.getProperty("preferredLibraries")
+    preferredLibrarySet = dirDoh.getProperty("preferredLibraries") if dirDoh.getProperty("preferredLibraries") else None
     oldPath             = os.getcwd()
 
     try:
@@ -329,14 +343,14 @@ def linkPrograms(dirPath):
         for program in programs:
             #print "Linking program: " + program
             programObjectFilesProp = program + ".objectFiles"
-            extraObjectFiles       = dirDoh.getProperty(programObjectFilesProp, [])
+            extraObjectFiles       = OrderedSet(dirDoh.getProperty(programObjectFilesProp, []))
             lenExtraObjectFiles    = len(extraObjectFiles)
 
             while True:
                 try:
                     ldCommand = ["cc", sourceToTargetFileName(program + ".c"), "-o", "target/" + program]
 
-                    for objectFile in extraObjectFiles:
+                    for objectFile in extraObjectFiles.toList():
                         ldCommand.append(objectFile)
 
                     if takeAction(" ".join(ldCommand)):
@@ -345,7 +359,7 @@ def linkPrograms(dirPath):
                     # If the number of object files has grown, update the doh
                     #
                     if len(extraObjectFiles) > lenExtraObjectFiles:
-                        dirDoh.setProperty(programObjectFilesProp, extraObjectFiles)
+                        dirDoh.setProperty(programObjectFilesProp, extraObjectFiles.toList())
 
                     break # Done!
 
@@ -389,7 +403,7 @@ def linkPrograms(dirPath):
                                 fatal("Found symbol %s needed by %s in %s in multiple files: %s"
                                       % (symbol, program, dirPath, oFileList))
 
-                        extraObjectFiles.append(os.path.relpath(oFileList[0]))
+                        extraObjectFiles.add(os.path.relpath(oFileList[0]))
 
                     # If no additional object files were added, fail
                     if len(extraObjectFiles) <= numberOfObjectFiles:
