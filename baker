@@ -321,6 +321,9 @@ def findSymbol(dirPath, symbol, exclude=None):
 
     return findSymbol(parent, symbol, exclude=os.path.basename(dirPath))
 
+def enableCoreDumps():
+    resource.setrlimit(resource.RLIMIT_CORE, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
+
 def linkPrograms(dirPath):
     """
     Link all programs in dirPath and any of its subdirectories
@@ -412,10 +415,7 @@ def linkPrograms(dirPath):
 
             if getOption("test") and testPat.match(program) and takeAction("run " + program):
                 try:
-                    rlimitsCore = resource.getrlimit(resource.RLIMIT_CORE)
-                    resource.setrlimit(resource.RLIMIT_CORE, (-1, -1))
-                    output = subprocess.check_output(["target/" + program], stderr=subprocess.STDOUT)
-                    resource.setrlimit(resource.RLIMIT_CORE, rlimitsCore)
+                    output = subprocess.check_output(["target/" + program], stderr=subprocess.STDOUT, preexec_fn=enableCoreDumps)
 
                     if getOption("verbose"):
                         sys.stdout.write(output)
