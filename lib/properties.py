@@ -4,43 +4,43 @@ import sys
 
 from options import fatal
 
-dirPathToDoh = {}
+filePathToProperties = {}
 
-class Doh:
-    def __init__(self, dirPath):
+class Properties:
+    def __init__(self, filePath):
         """
-        Read a doh file into the cache
+        Read a Properties file into the cache
         """
-        if dirPath in dirPathToDoh:
-            fatal("doh for directory %s has already been constructed" % dirPath)
 
-        self.filePath = os.path.join(dirPath, "baker.doh")
+        if filePath in filePathToProperties:
+            fatal("Properties for file %s have already been read" % filePath)
 
-        if os.path.isfile(self.filePath):
-            with open(self.filePath) as input:
+        self.filePath = filePath
+
+        if os.path.isfile(filePath):
+            with open(filePath) as input:
                 contents = input.read()
 
             try:
                 self.properties = json.loads(contents)
             except ValueError:
-                fatal("Can't understand contents of %s:\n'%s'" % (self.filePath, contents))
+                fatal("Can't understand contents of %s:\n'%s'" % (filePath, contents))
 
         else:
             self.properties = {}
 
-        self.dirty            = False
-        dirPathToDoh[dirPath] = self
+        self.dirty                    = False
+        filePathToProperties[filePath] = self
 
     @classmethod
-    def fromDirPath(clazz, dirPath):
+    def fromFilePath(clazz, filePath):
         """
-        Get or construct doh object for a directory path
+        Get or construct Properties object for a file path
         """
-
         try:
-            return dirPathToDoh[dirPath]
+            return filePathToProperties[filePath]
         except KeyError:
-            return clazz(dirPath)
+            return clazz(filePath)
 
     def getProperty(self, name, default=None):
         if name in self.properties:

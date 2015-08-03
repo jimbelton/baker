@@ -2,10 +2,11 @@
 
 """baker - build C libraries and programs without a makefile
 
-Usage: baker [-ntv]
+Usage: baker [-nstv]
 
 Options:
     -n --noaction  Tell what would be done without actually doing it
+    -s --strict    Fail on warnings
     -t --test      Run any test programs found
     -v --verbose   Tell what is being done
 """
@@ -18,7 +19,7 @@ import subprocess
 import sys
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
-from baker.doh  import Doh
+from properties import Properties
 from directory  import Directory, fileToDirectories
 from docopt     import docopt
 from options    import error, fatal, getOption, setOptions, takeAction
@@ -73,8 +74,8 @@ def compileSources(dirPath):
     """
     Compile all source files found in dirPath and any of its subdirectories
     """
-    dirDoh                  = Doh.fromDirPath(dirPath)
-    preferredIncludeDirExps = dirDoh.getProperty("preferredIncludeDirExps")
+    dirProperties           = Properties.fromFilePath(os.path.join(dirPath, "baker.doh"))
+    preferredIncludeDirExps = dirProperties.getProperty("preferredIncludeDirExps")
     oldPath                 = os.getcwd()
     os.chdir(dirPath)
     (files, subDirs) = Directory.fromPath(dirPath).getContents()
@@ -89,12 +90,15 @@ def compileSources(dirPath):
                 os.mkdir("target")
 
             entryIncludeDirsProp = entry + ".includeDirectories"
-            extraIncludeDirs     = set(dirDoh.getProperty(entryIncludeDirsProp, default=[]))
+            extraIncludeDirs     = set(dirProperties.getProperty(entryIncludeDirsProp, default=[]))
             lenExtraIncludeDirs  = len(extraIncludeDirs)
 
             while True:
                 try:
                     ccCommand = ["cc", "-O3", "-c", os.path.join(dirPath, entry), "-o", sourceToTargetFileName(entry)]
+
+                    if getOption("strict"):
+                        ccCommand.append("-Werror")
 
                     for incDirPath in list(extraIncludeDirs):
                         ccCommand.extend(["-I", incDirPath])
@@ -102,10 +106,10 @@ def compileSources(dirPath):
                     if takeAction(" ".join(ccCommand)):
                         subprocess.check_output(ccCommand, stderr=subprocess.STDOUT)
 
-                    # If the include path has grown, update the doh
+                    # If the include path has grown, update the Properties
                     #
                     if len(extraIncludeDirs) > lenExtraIncludeDirs:
-                        dirDoh.setProperty(entryIncludeDirsProp, list(extraIncludeDirs))
+                        dirProperties.setProperty(entryIncludeDirsProp, list(extraIncludeDirs))
 
                     break # Done!
 
@@ -158,7 +162,7 @@ def compileSources(dirPath):
                     sys.stderr.write(exception.output)
                     fatal("Failed to compile C file with: %s" % (" ".join(ccCommand)))
 
-    dirDoh.flushIfDirty()
+    dirProperties.flushIfDirty()
     os.chdir(oldPath)
 
 def getSymbolsFromObjectFile(objectFileName):
@@ -197,8 +201,8 @@ def archiveObjects(dirPath):
     """
     Archive all object files in dirPath and any of its subdirectories that do not contain programs
     """
-    dirDoh  = Doh.fromDirPath(dirPath)
-    oldPath  = os.getcwd()
+    dirProperties = Properties.fromFilePath(os.path.join(dirPath, "baker.doh"))
+    oldPath       = os.getcwd()
 
     try:
         os.chdir(dirPath)
@@ -224,13 +228,13 @@ def archiveObjects(dirPath):
                     objectFiles.append(objectFile)
                     dictOfListsBulkAdd(dirSymbolToFiles, symbols, objectFile)
 
-        # If any new programs were found, update the doh
-        if len(programs) > len(dirDoh.getProperty("programs", [])):
-            dirDoh.setProperty("programs", programs)
+        # If any new programs were found, update the Properties
+        if len(programs) > len(dirProperties.getProperty("programs", [])):
+            dirProperties.setProperty("programs", programs)
 
-        archive = dirDoh.getProperty("archive")
+        archive = dirProperties.getProperty("archive")
 
-        # If any progam was found and no explicit doh telling baker to make an archive, return
+        # If any progam was found and no explicit Properties telling baker to make an archive, return
         if len(programs) > 0 and not archive:
             directory.symbolToFiles = dirSymbolToFiles
             return
@@ -240,7 +244,7 @@ def archiveObjects(dirPath):
 
         if not archive:
             archive = "target/%s.a" % os.path.basename(dirPath)
-            dirDoh.setProperty("archive", archive)
+            dirProperties.setProperty("archive", archive)
 
         if os.path.isfile(archive):
             os.remove(archive)
@@ -265,7 +269,7 @@ def archiveObjects(dirPath):
         raise
 
     finally:
-        dirDoh.flushIfDirty()
+        dirProperties.flushIfDirty()
         os.chdir(oldPath)
 
 def findSymbol(dirPath, symbol, exclude=None):
@@ -328,15 +332,15 @@ def linkPrograms(dirPath):
     """
     Link all programs in dirPath and any of its subdirectories
     """
-    dirDoh              = Doh.fromDirPath(dirPath)
-    preferredLibrarySet = dirDoh.getProperty("preferredLibraries") if dirDoh.getProperty("preferredLibraries") else None
+    dirProperties       = Properties.fromFilePath(os.path.join(dirPath, "baker.doh"))
+    preferredLibrarySet = dirProperties.getProperty("preferredLibraries") if dirProperties.getProperty("preferredLibraries") else None
     oldPath             = os.getcwd()
 
     try:
         os.chdir(dirPath)
         directory        = Directory.fromPath(dirPath)
         (files, subDirs) = directory.getContents()
-        programs         = dirDoh.getProperty("programs", [])
+        programs         = dirProperties.getProperty("programs", [])
         #print "Linking programs in directory " + dirPath + " files " + str(files) + " subDirs " + str(subDirs)
 
         for subDir in subDirs:
@@ -346,7 +350,7 @@ def linkPrograms(dirPath):
         for program in programs:
             #print "Linking program: " + program
             programObjectFilesProp = program + ".objectFiles"
-            extraObjectFiles       = OrderedSet(dirDoh.getProperty(programObjectFilesProp, []))
+            extraObjectFiles       = OrderedSet(dirProperties.getProperty(programObjectFilesProp, []))
             lenExtraObjectFiles    = len(extraObjectFiles)
 
             while True:
@@ -359,10 +363,10 @@ def linkPrograms(dirPath):
                     if takeAction(" ".join(ldCommand)):
                         subprocess.check_output(ldCommand, stderr=subprocess.STDOUT)
 
-                    # If the number of object files has grown, update the doh
+                    # If the number of object files has grown, update the Properties
                     #
                     if len(extraObjectFiles) > lenExtraObjectFiles:
-                        dirDoh.setProperty(programObjectFilesProp, extraObjectFiles.toList())
+                        dirProperties.setProperty(programObjectFilesProp, extraObjectFiles.toList())
 
                     break # Done!
 
@@ -431,7 +435,7 @@ def linkPrograms(dirPath):
         raise
 
     finally:
-        dirDoh.flushIfDirty()
+        dirProperties.flushIfDirty()
         os.chdir(oldPath)
 
 # Compile any source files found in and under the current directory, then link any programs and archive any directories with none
