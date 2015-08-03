@@ -24,16 +24,18 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
 from properties import Properties
 from directory  import Directory, fileToDirectories
 from docopt     import docopt
-from options    import error, fatal, getOption, setOptions, takeAction, options
+from options    import error, fatal, getOption, setOptions, takeAction, warn
 from OrderedSet import OrderedSet
 
 setOptions(docopt(__doc__, version='1.0'))
+setOptions({"warning": True})
 
 startDirPath   = os.path.abspath(".")
 symbolToFiles  = {}
 hFilePat       = re.compile(r'\s(\S+\.h): No such file')
 symbolPat      = re.compile(r'[\da-f]+\s+\w\s+(\w+)$')
 testPat        = re.compile(r'test')
+warningPat     = re.compile(r'\bwarning:')
 
 def removeTargets(dirPath):
     """
@@ -129,9 +131,12 @@ def compileSources(dirPath):
                         ccCommand.extend(["-I", incDirPath])
 
                     if takeAction(" ".join(ccCommand)):
-                        subprocess.check_output(ccCommand, stderr=subprocess.STDOUT)
+                        output = subprocess.check_output(ccCommand, stderr=subprocess.STDOUT)
 
-                    # If the include path has grown, update the Properties
+                        if warningPat.search(output):
+                            sys.stderr.write(output)
+
+                    # If the include path has grown, update the properties
                     #
                     if len(extraIncludeDirs) > lenExtraIncludeDirs:
                         dirProperties.setProperty(entryIncludeDirsProp, list(extraIncludeDirs))
