@@ -32,10 +32,20 @@ setOptions({"warning": True})
 
 startDirPath   = os.path.abspath(".")
 symbolToFiles  = {}
-hFilePat       = re.compile(r'\s(\S+\.h): No such file')
+
 symbolPat      = re.compile(r'[\da-f]+\s+\w\s+(\w+)$')
 testPat        = re.compile(r'test')
 warningPat     = re.compile(r'\bwarning:')
+
+defaultProperties = {
+    "ccFlags": ["-g", "-O3", "-W", "-Waggregate-return", "-Wall", "-Wcast-align", "-Wcast-qual", "-Wcomment", "-Wimplicit",
+                "-Wmissing-declarations", "-Wmissing-prototypes", "-Wnested-externs", "-Wpointer-arith", "-Wredundant-decls",
+                "-Wshadow", "-Wstrict-prototypes", "-Wunused", "-Wwrite-strings"]
+}
+
+# NOTE: If compiling for covereage, need to remove {-O, -O1, -O2, -O3} and -Wunitialized and and -O0
+# See http://gcc.gnu.org/onlinedocs/gcc-3.0/gcc_8.html#SEC135: "...but if you want to prove that every single line in your program
+# was executed, you should not compile with optimization at the same time."
 
 def removeTargets(dirPath):
     """
@@ -97,6 +107,9 @@ def findFile(dirPath, fileName, exclude=None):
 def sourceToTargetFileName(sourceFileName):
     return "target/" + sourceFileName[:-2] + ".o"
 
+genxfaceScript = os.path.join(os.path.dirname(os.path.abspath(__file__)), "genxface.pl")
+hFilePat       = re.compile(r'(?:^(.*\.[ch]):\d+:\d+: fatal error:)\s(\S+\.h): No such file')
+
 def compileSources(dirPath):
     """
     Compile all source files found in dirPath and any of its subdirectories
@@ -112,6 +125,15 @@ def compileSources(dirPath):
         compileSources(os.path.join(dirPath, subDir))
 
     for entry in files:
+        # May want another pass to make sure *-proto.h files are generated first
+
+        if entry.endswith("-proto.h"):
+
+            if os.path.isfile(entry[:-8] + ".c") and takeAction(genxfaceScript + " in " + dirPath):
+                subprocess.check_output([genxfaceScript])
+
+            continue
+
         if entry.endswith(".c"):
             if not os.path.isdir("target"):
                 os.mkdir("target")
@@ -122,7 +144,8 @@ def compileSources(dirPath):
 
             while True:
                 try:
-                    ccCommand = ["cc", "-O3", "-c", os.path.join(dirPath, entry), "-o", sourceToTargetFileName(entry)]
+                    ccCommand = ["cc", "-c", os.path.join(dirPath, entry), "-o", sourceToTargetFileName(entry)]
+                    ccCommand.extend(defaultProperties["ccFlags"])
 
                     if getOption("strict"):
                         ccCommand.append("-Werror")
@@ -145,6 +168,7 @@ def compileSources(dirPath):
 
                 except subprocess.CalledProcessError as exception:
                     numberOfIncludeDirs = len(extraIncludeDirs)
+                    interfacesGenerated = False
 
                     for line in exception.output.split('\n'):
                         match = hFilePat.search(line)
@@ -152,7 +176,20 @@ def compileSources(dirPath):
                         if not match:
                             continue
 
-                        hFile    = match.group(1)
+                        includer = match.group(1)
+                        hFile    = match.group(2)
+
+                        # If include file is a generated prototype file, generate it
+                        #
+                        if includer and includer.endswith(".h"):
+                            if os.path.basename(includer)[:-2] + "-proto.h" == match.group(2):
+                                hDir = os.path.dirname(includer) if os.path.dirname(includer) != "" else "."
+
+                                if takeAction(genxfaceScript + " " + hDir):
+                                    subprocess.check_output([genxfaceScript, hDir])
+                                    interfacesGenerated = True
+                                    break
+
                         hDirList = fileToDirectories.get(hFile)
 
                         # May be in the cache
@@ -168,7 +205,7 @@ def compileSources(dirPath):
 
                         if len(hDirList) > 1:
                             if (preferredIncludeDirExps):
-                                print str(preferredIncludeDirExps)
+
                                 for hDir in hDirList:
                                     for exp in preferredIncludeDirExps:
                                         if re.match(exp, hDir.path):
@@ -185,8 +222,8 @@ def compileSources(dirPath):
 
                         extraIncludeDirs.add(hDirList[0].getRelpath())
 
-                    # If at least on additional directory was added, try again
-                    if len(extraIncludeDirs) > numberOfIncludeDirs:
+                    # If interface files were generated or at least on additional directory was added, try again
+                    if interfacesGenerated or len(extraIncludeDirs) > numberOfIncludeDirs:
                         continue
 
                     sys.stderr.write(exception.output)
