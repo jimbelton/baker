@@ -63,19 +63,10 @@ defaultProperties = {
 # See http://gcc.gnu.org/onlinedocs/gcc-3.0/gcc_8.html#SEC135: "...but if you want to prove that every single line in your program
 # was executed, you should not compile with optimization at the same time."
 
-def removeTargets(dirPath):
+def removeTargets(dirPath, dirProperties, files):
     """
     Remove all target directoriess found in dirPath and any of its subdirectories
     """
-    #dirProperties = Properties.fromFilePath(os.path.join(dirPath, "baker.doh"))
-    oldPath       = os.getcwd()
-    os.chdir(dirPath)
-    (files, subDirs) = Directory.fromPath(dirPath).getContents()
-    #print "Cleaning %s (subDirs=%s, files=%s)" % (dirPath, str(subDirs), str(files))
-
-    for subDir in subDirs:
-        removeTargets(os.path.join(dirPath, subDir))
-
     for entry in files:
         if entry.endswith(".c"):
             if os.path.isdir("target") and takeAction("rm -rf " + dirPath + "/target"):
@@ -83,8 +74,34 @@ def removeTargets(dirPath):
 
             break
 
-    #dirProperties.flushIfDirty()
-    os.chdir(oldPath)
+protoPat = re.compile(r'(.+)-proto.h$')
+
+def generateDirHeaders(prefix, dirPath, dirName):
+    if prefix == dirName:
+        if takeAction("'" + genxfaceScript + " -d' in " + dirPath):
+            subprocess.check_output([genxfaceScript, "-d", dirPath])
+
+        return True
+
+    if os.path.isfile(os.path.join(dirPath, prefix + ".c")):
+        if takeAction(genxfaceScript + " in " + dirPath):
+            subprocess.check_output([genxfaceScript, dirPath])
+
+        return True
+
+    return False
+
+def regenerateHeaders(dirPath, dirProperties, files):
+    dirName = os.path.basename(dirPath)
+
+    for file in files:
+        match = protoPat.match(file)
+
+        if not match:
+            continue
+
+        if generateDirHeaders(match.group(1), dirPath, dirName):
+            break
 
 def findFile(dirPath, fileName, exclude=None):
     """
@@ -126,30 +143,14 @@ def sourceToTargetFileName(sourceFileName):
 genxfaceScript = os.path.join(os.path.dirname(os.path.abspath(__file__)), "genxface.pl")
 hFilePat       = re.compile(r'(?:^(.*\.[ch]):\d+:\d+: fatal error:)\s(\S+\.h): No such file')
 
-def compileSources(dirPath):
+def compileSources(dirPath, dirProperties, files):
     """
-    Compile all source files found in dirPath and any of its subdirectories
+    Compile all source files found in entries
     """
-    dirProperties           = Properties.fromFilePath(os.path.join(dirPath, "baker.doh"))
-    preferredIncludeDirExps = dirProperties.getProperty("preferredIncludeDirExps")
-    oldPath                 = os.getcwd()
-    os.chdir(dirPath)
-    (files, subDirs) = Directory.fromPath(dirPath).getContents()
-    #print "Compiling directory " + dirPath + " files " + str(files) + " subDirs " + str(subDirs)
 
-    for subDir in subDirs:
-        compileSources(os.path.join(dirPath, subDir))
+    preferredIncludeDirExps = dirProperties.getProperty("preferredIncludeDirExps")
 
     for entry in files:
-        # May want another pass to make sure *-proto.h files are generated first
-
-        if entry.endswith("-proto.h"):
-
-            if os.path.isfile(entry[:-8] + ".c") and takeAction(genxfaceScript + " in " + dirPath):
-                subprocess.check_output([genxfaceScript])
-
-            continue
-
         if entry.endswith(".c"):
             if not os.path.isdir("target"):
                 os.mkdir("target")
@@ -195,16 +196,16 @@ def compileSources(dirPath):
                         includer = match.group(1)
                         hFile    = match.group(2)
 
-                        # If include file is a generated prototype file, generate it
+                        # If the missing include file looks like a generated prototype file, try to generate it
                         #
-                        if includer and includer.endswith(".h"):
-                            if os.path.basename(includer)[:-2] + "-proto.h" == match.group(2):
-                                hDir = os.path.dirname(includer) if os.path.dirname(includer) != "" else "."
+                        if includer and hFile.endswith("-proto.h"):
+                            print includer + " includes " + hFile
+                            includerDir = os.path.dirname(includer) or dirPath
+                            includerDir = includerDir if includerDir[0] == '/' else os.path.join(dirPath, includerDir)
 
-                                if takeAction(genxfaceScript + " " + hDir):
-                                    subprocess.check_output([genxfaceScript, hDir])
-                                    interfacesGenerated = True
-                                    break
+                            if generateDirHeaders(hFile[:-8], includerDir, os.path.basename(includerDir)):
+                                interfacesGenerated = True
+                                break
 
                         hDirList = fileToDirectories.get(hFile)
 
@@ -245,9 +246,6 @@ def compileSources(dirPath):
                     sys.stderr.write(exception.output)
                     fatal("Failed to compile C file with: %s" % (" ".join(ccCommand)))
 
-    dirProperties.flushIfDirty()
-    os.chdir(oldPath)
-
 def getSymbolsFromObjectFile(objectFileName):
     symbols = set()
 
@@ -287,73 +285,65 @@ def archiveObjects(dirPath):
     dirProperties = Properties.fromFilePath(os.path.join(dirPath, "baker.doh"))
     oldPath       = os.getcwd()
 
+    os.chdir(dirPath)
+    directory        = Directory.fromPath(dirPath)
+    (files, subDirs) = directory.getContents()
+    #print "Archiving directory " + dirPath + " files " + str(files) + " subDirs " + str(subDirs)
+
+    for subDir in subDirs:
+        archiveObjects(os.path.join(dirPath, subDir))
+
+    objectFiles      = []
+    programs         = []
+    dirSymbolToFiles = {}
+
+    for entry in files:
+        if entry.endswith(".c"):
+            objectFile = sourceToTargetFileName(entry)
+            symbols    = getSymbolsFromObjectFile(objectFile)
+
+            if "main" in symbols:
+                programs.append(entry[:-2])
+            else:
+                objectFiles.append(objectFile)
+                dictOfListsBulkAdd(dirSymbolToFiles, symbols, objectFile)
+
+    # If any new programs were found, update the Properties
+    if len(programs) > len(dirProperties.getProperty("programs", [])):
+        dirProperties.setProperty("programs", programs)
+
+    archive = dirProperties.getProperty("archive")
+
+    # If any progam was found and no explicit Properties telling baker to make an archive, return
+    if len(programs) > 0 and not archive:
+        directory.symbolToFiles = dirSymbolToFiles
+        return
+
+    if len(dirSymbolToFiles) == 0:
+        return
+
+    if not archive:
+        archive = "target/%s.a" % os.path.basename(dirPath)
+        dirProperties.setProperty("archive", archive)
+
+    if os.path.isfile(archive):
+        os.remove(archive)
+
     try:
-        os.chdir(dirPath)
-        directory        = Directory.fromPath(dirPath)
-        (files, subDirs) = directory.getContents()
-        #print "Archiving directory " + dirPath + " files " + str(files) + " subDirs " + str(subDirs)
+        arCommand = ["ar", "rc", archive]
+        arCommand.extend(objectFiles)
 
-        for subDir in subDirs:
-            archiveObjects(os.path.join(dirPath, subDir))
+        if takeAction(" ".join(arCommand)):
+            subprocess.check_output(arCommand)
+    except subprocess.CalledProcessError as exception:
+        sys.stderr.write(exception.output)
+        fatal("Unable to create library %s from %s" % (objectFileName))
 
-        objectFiles      = []
-        programs         = []
-        dirSymbolToFiles = {}
+    for symbol in dirSymbolToFiles:
+        if len(dirSymbolToFiles[symbol]) == 1:
+            dirSymbolToFiles[symbol] = [os.path.join(dirPath, archive)]
 
-        for entry in files:
-            if entry.endswith(".c"):
-                objectFile = sourceToTargetFileName(entry)
-                symbols    = getSymbolsFromObjectFile(objectFile)
-
-                if "main" in symbols:
-                    programs.append(entry[:-2])
-                else:
-                    objectFiles.append(objectFile)
-                    dictOfListsBulkAdd(dirSymbolToFiles, symbols, objectFile)
-
-        # If any new programs were found, update the Properties
-        if len(programs) > len(dirProperties.getProperty("programs", [])):
-            dirProperties.setProperty("programs", programs)
-
-        archive = dirProperties.getProperty("archive")
-
-        # If any progam was found and no explicit Properties telling baker to make an archive, return
-        if len(programs) > 0 and not archive:
-            directory.symbolToFiles = dirSymbolToFiles
-            return
-
-        if len(dirSymbolToFiles) == 0:
-            return
-
-        if not archive:
-            archive = "target/%s.a" % os.path.basename(dirPath)
-            dirProperties.setProperty("archive", archive)
-
-        if os.path.isfile(archive):
-            os.remove(archive)
-
-        try:
-            arCommand = ["ar", "rc", archive]
-            arCommand.extend(objectFiles)
-
-            if takeAction(" ".join(arCommand)):
-                subprocess.check_output(arCommand)
-        except subprocess.CalledProcessError as exception:
-            sys.stderr.write(exception.output)
-            fatal("Unable to create library %s from %s" % (objectFileName))
-
-        for symbol in dirSymbolToFiles:
-            if len(dirSymbolToFiles[symbol]) == 1:
-                dirSymbolToFiles[symbol] = [os.path.join(dirPath, archive)]
-
-        dictOfListsExtend(symbolToFiles, dirSymbolToFiles)
-
-    except:
-        raise
-
-    finally:
-        dirProperties.flushIfDirty()
-        os.chdir(oldPath)
+    dictOfListsExtend(symbolToFiles, dirSymbolToFiles)
 
 def findSymbol(dirPath, symbol, exclude=None):
     """
@@ -411,123 +401,126 @@ def findSymbol(dirPath, symbol, exclude=None):
 def enableCoreDumps():
     resource.setrlimit(resource.RLIMIT_CORE, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
 
-def linkPrograms(dirPath):
+def linkPrograms(dirPath, dirProperties, files):
     """
     Link all programs in dirPath and any of its subdirectories
     """
-    dirProperties       = Properties.fromFilePath(os.path.join(dirPath, "baker.doh"))
-    preferredLibrarySet = dirProperties.getProperty("preferredLibraries") if dirProperties.getProperty("preferredLibraries") else None
-    oldPath             = os.getcwd()
 
-    try:
-        os.chdir(dirPath)
-        directory        = Directory.fromPath(dirPath)
-        (files, subDirs) = directory.getContents()
-        programs         = dirProperties.getProperty("programs", [])
-        #print "Linking programs in directory " + dirPath + " files " + str(files) + " subDirs " + str(subDirs)
+    preferredIncludeDirExps = dirProperties.getProperty("preferredIncludeDirExps")
+    programs                = dirProperties.getProperty("programs", [])
+    dirName                 = Directory.fromPath(dirPath)
+    #print "Linking programs in directory " + dirPath + " files " + str(files) + " subDirs " + str(subDirs)
 
-        for subDir in subDirs:
-            linkPrograms(os.path.join(dirPath, subDir))
+    # Try to build any programs in the directory
+    for program in programs:
+        #print "Linking program: " + program
+        programObjectFilesProp = program + ".objectFiles"
+        extraObjectFiles       = OrderedSet(dirProperties.getProperty(programObjectFilesProp, []))
+        lenExtraObjectFiles    = len(extraObjectFiles)
 
-        # Try to build any programs in the directory
-        for program in programs:
-            #print "Linking program: " + program
-            programObjectFilesProp = program + ".objectFiles"
-            extraObjectFiles       = OrderedSet(dirProperties.getProperty(programObjectFilesProp, []))
-            lenExtraObjectFiles    = len(extraObjectFiles)
+        while True:
+            try:
+                ldCommand = ["cc", sourceToTargetFileName(program + ".c"), "-o", "target/" + program]
 
-            while True:
-                try:
-                    ldCommand = ["cc", sourceToTargetFileName(program + ".c"), "-o", "target/" + program]
+                for objectFile in extraObjectFiles.toList():
+                    ldCommand.append(objectFile)
 
-                    for objectFile in extraObjectFiles.toList():
-                        ldCommand.append(objectFile)
+                if takeAction(" ".join(ldCommand)):
+                    subprocess.check_output(ldCommand, stderr=subprocess.STDOUT)
 
-                    if takeAction(" ".join(ldCommand)):
-                        subprocess.check_output(ldCommand, stderr=subprocess.STDOUT)
+                # If the number of object files has grown, update the Properties
+                #
+                if len(extraObjectFiles) > lenExtraObjectFiles:
+                    dirProperties.setProperty(programObjectFilesProp, extraObjectFiles.toList())
 
-                    # If the number of object files has grown, update the Properties
-                    #
-                    if len(extraObjectFiles) > lenExtraObjectFiles:
-                        dirProperties.setProperty(programObjectFilesProp, extraObjectFiles.toList())
+                break # Done!
 
-                    break # Done!
+            except subprocess.CalledProcessError as exception:
+                numberOfObjectFiles = len(extraObjectFiles)
+                undefinedSymbols    = []
 
-                except subprocess.CalledProcessError as exception:
-                    numberOfObjectFiles = len(extraObjectFiles)
-                    undefinedSymbols    = []
+                for line in exception.output.split('\n'):
+                    match = undefSymbolPat.search(line)
 
-                    for line in exception.output.split('\n'):
-                        match = undefSymbolPat.search(line)
+                    if not match:
+                        continue
 
-                        if not match:
-                            continue
+                    undefinedSymbols.append(match.group(1))
 
-                        undefinedSymbols.append(match.group(1))
+                for symbol in undefinedSymbols:
+                    # First, look in any object files in the same directory
+                    oFileList = directory.symbolToFiles.get(symbol)
 
-                    for symbol in undefinedSymbols:
-                        # First, look in any object files in the same directory
-                        oFileList = directory.symbolToFiles.get(symbol)
+                    # May be in the cache
+                    if not oFileList:
+                        oFileList = symbolToFiles.get(symbol)
 
-                        # May be in the cache
-                        if not oFileList:
-                            oFileList = symbolToFiles.get(symbol)
+                    # Look in higher level directories for archives
+                    if not oFileList:
+                        oFileList = findSymbol(os.path.dirname(startDirPath), symbol, exclude=os.path.basename(startDirPath))
 
-                        # Look in higher level directories for archives
-                        if not oFileList:
-                            oFileList = findSymbol(os.path.dirname(startDirPath), symbol, exclude=os.path.basename(startDirPath))
+                    if not oFileList:
+                        sys.stderr.write(exception.output)
+                        fatal("Failed to find symbol %s needed by %s in %s" % (hFile, program, dirPath))
 
-                        if not oFileList:
-                            sys.stderr.write(exception.output)
-                            fatal("Failed to find symbol %s needed by %s in %s" % (hFile, program, dirPath))
+                    if len(oFileList) > 1:
+                        if (preferredLibrarySet):
+                            for oFile in oFileList:
+                                if os.path.basename(oFile) in preferredLibrarySet:
+                                    oFileList = [oFile]
+                                    break
 
                         if len(oFileList) > 1:
-                            if (preferredLibrarySet):
-                                for oFile in oFileList:
-                                    if os.path.basename(oFile) in preferredLibrarySet:
-                                        oFileList = [oFile]
-                                        break
+                            sys.stderr.write(exception.output)
+                            fatal("Found symbol %s needed by %s in %s in multiple files: %s"
+                                  % (symbol, program, dirPath, oFileList))
 
-                            if len(oFileList) > 1:
-                                sys.stderr.write(exception.output)
-                                fatal("Found symbol %s needed by %s in %s in multiple files: %s"
-                                      % (symbol, program, dirPath, oFileList))
+                    extraObjectFiles.add(os.path.relpath(oFileList[0]))
 
-                        extraObjectFiles.add(os.path.relpath(oFileList[0]))
-
-                    # If no additional object files were added, fail
-                    if len(extraObjectFiles) <= numberOfObjectFiles:
-                        sys.stderr.write(exception.output)
-                        fatal("Failed to link C program with: %s" % (" ".join(ldCommand)))
-
-            if getOption("test") and testPat.match(program) and takeAction("run " + program):
-                try:
-                    output = subprocess.check_output(["target/" + program], stderr=subprocess.STDOUT, preexec_fn=enableCoreDumps)
-
-                    if getOption("verbose"):
-                        sys.stdout.write(output)
-                except subprocess.CalledProcessError as exception:
+                # If no additional object files were added, fail
+                if len(extraObjectFiles) <= numberOfObjectFiles:
                     sys.stderr.write(exception.output)
+                    fatal("Failed to link C program with: %s" % (" ".join(ldCommand)))
 
-                    if exception.returncode == -signal.SIGSEGV:
-                        fatal("Test program %s was killed with a segmentation fault" % program)
+        if getOption("test") and testPat.match(program) and takeAction("run " + program):
+            try:
+                output = subprocess.check_output(["target/" + program], stderr=subprocess.STDOUT, preexec_fn=enableCoreDumps)
 
-                    error("Test failure in program " + program)
+                if getOption("verbose"):
+                    sys.stdout.write(output)
+            except subprocess.CalledProcessError as exception:
+                sys.stderr.write(exception.output)
 
-    except:
-        raise
+                if exception.returncode == -signal.SIGSEGV:
+                    fatal("Test program %s was killed with a segmentation fault" % program)
 
-    finally:
-        dirProperties.flushIfDirty()
-        os.chdir(oldPath)
+                error("Test failure in program " + program)
+
+def visitDirTree(dirPath, visit):
+    """
+    Visits dirPath and all of its subdirectories in depth first postfix order (leaves first)
+    @param visit Function to call on each directory, which is passed the directory path, the directory properties, and the files
+    """
+    dirProperties           = Properties.fromFilePath(os.path.join(dirPath, "baker.doh"))
+    oldPath                 = os.getcwd()
+    os.chdir(dirPath)
+    (files, subDirs) = Directory.fromPath(dirPath).getContents()
+
+    for subDir in subDirs:
+        visitDirTree(os.path.join(dirPath, subDir), visit)
+
+    visit(dirPath, dirProperties, files)
+    dirProperties.flushIfDirty()
+    os.chdir(oldPath)
 
 if getOption("clean"):
-    removeTargets(startDirPath)
+    visitDirTree(startDirPath, removeTargets)
     sys.exit(0)
 
 # Compile any source files found in and under the current directory, then link any programs and archive any directories with none
 
 Directory.setIndexExp(r'.+\.h$')
-compileSources(startDirPath)
-archiveObjects(startDirPath)
-linkPrograms(startDirPath)
+visitDirTree(startDirPath, regenerateHeaders)
+visitDirTree(startDirPath, compileSources)
+visitDirTree(startDirPath, archiveObjects)
+visitDirTree(startDirPath, linkPrograms)
