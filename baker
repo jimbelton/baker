@@ -278,21 +278,11 @@ def dictOfListsExtend(intoDict, fromDict):
 
 undefSymbolPat = re.compile(r': undefined reference to [\'`](\w+)\'')
 
-def archiveObjects(dirPath):
+def archiveObjects(dirPath, dirProperties, files):
     """
-    Archive all object files in dirPath and any of its subdirectories that do not contain programs
+    Archive all object files in dirPath if it does not contain programs
     """
-    dirProperties = Properties.fromFilePath(os.path.join(dirPath, "baker.doh"))
-    oldPath       = os.getcwd()
-
-    os.chdir(dirPath)
     directory        = Directory.fromPath(dirPath)
-    (files, subDirs) = directory.getContents()
-    #print "Archiving directory " + dirPath + " files " + str(files) + " subDirs " + str(subDirs)
-
-    for subDir in subDirs:
-        archiveObjects(os.path.join(dirPath, subDir))
-
     objectFiles      = []
     programs         = []
     dirSymbolToFiles = {}
