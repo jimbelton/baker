@@ -54,9 +54,10 @@ testPat        = re.compile(r'test')
 warningPat     = re.compile(r'\bwarning:')
 
 defaultProperties = {
-    "ccFlags": ["-g", "-O3", "-W", "-Waggregate-return", "-Wall", "-Wcast-align", "-Wcast-qual", "-Wcomment", "-Wimplicit",
-                "-Wmissing-declarations", "-Wmissing-prototypes", "-Wnested-externs", "-Wpointer-arith", "-Wredundant-decls",
-                "-Wshadow", "-Wstrict-prototypes", "-Wunused", "-Wwrite-strings"]
+    "ccFlags": {"-g": True, "-O" : "3", "-W": True, "-Waggregate-return": True, "-Wall": True, "-Wcast-align": True,
+                "-Wcast-qual": True, "-Wcomment": True, "-Wimplicit": True, "-Wmissing-declarations": True,
+                "-Wmissing-prototypes": True, "-Wnested-externs": True, "-Wpointer-arith": True, "-Wredundant-decls": True,
+                "-Wshadow": True, "-Wstrict-prototypes": True, "-Wunused": True, "-Wwrite-strings": True}
 }
 
 # NOTE: If compiling for covereage, need to remove {-O, -O1, -O2, -O3} and -Wunitialized and and -O0
@@ -162,7 +163,14 @@ def compileSources(dirPath, dirProperties, files):
             while True:
                 try:
                     ccCommand = ["cc", "-c", os.path.join(dirPath, entry), "-o", sourceToTargetFileName(entry)]
-                    ccCommand.extend(defaultProperties["ccFlags"])
+                    ccFlags = defaultProperties["ccFlags"].copy()
+                    ccFlags.update(dirProperties.getProperty("ccFlags", {}))
+
+                    for flag in ccFlags:
+                        if ccFlags[flag] == True:
+                            ccCommand.append(flag)
+                        elif ccFlags[flag]:
+                            ccCommand.append(flag + ccFlags[flag])
 
                     if getOption("strict"):
                         ccCommand.append("-Werror")
