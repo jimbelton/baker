@@ -37,14 +37,14 @@ Option | Long Option | Description
 
 You can tweak some of the values in the *baker.doh* files to deal with special cases.
 
-Property                | Type   | Description
------------------------ | ------ | -----------
-archive                 | string | Name of the archive to create; defaults to `target/<dir-name>.ar`; if specified in a directory that contains program and non-program object files, the non-program objects (i.e. the ones that don't define **main**) will be archived
-preferredIncludeDirExps | list   | List of regular expressions; matching directory paths will be preferred for header files found in more that one directory
-preferredLibraries      | list   | List of directory filenames that will be preferred if there is more than one containing a required symbol
+Property                | JSON Type | Description
+----------------------- | --------- | -----------
+archive                 | string    | Name of the archive to create; defaults to `target/<dir-name>.ar`; if specified in a directory that contains program and non-program object files, the non-program objects (i.e. the ones that don't define **main**) will be archived
+ccFlags                 | object    | Pairs of flag and one of True (include), False (exclude), or appended value
+preferredIncludeDirExps | list      | List of regular expressions; matching directory paths will be preferred for header files found in more that one directory
+preferredLibraries      | list      | List of library filenames that will be preferred if there is more than one containing a required symbol
 
-More will be added in future versions.
-
+More will be added in future versions. See the [Baker Wiki](https://github.com/jimbelton/baker/wiki) for more details.
 
 ## Copyright and License
 
