@@ -229,7 +229,7 @@ def compileSources(dirPath, dirProperties, files):
                             fatal("Failed to find C header file %s included by %s/%s" % (hFile, dirPath, entry))
 
                         if len(hDirList) > 1:
-                            if (preferredIncludeDirExps):
+                            if preferredIncludeDirExps:
 
                                 for hDir in hDirList:
                                     for exp in preferredIncludeDirExps:
@@ -404,9 +404,10 @@ def linkPrograms(dirPath, dirProperties, files):
     Link all programs in dirPath and any of its subdirectories
     """
 
-    preferredIncludeDirExps = dirProperties.getProperty("preferredIncludeDirExps")
-    programs                = dirProperties.getProperty("programs", [])
-    dirName                 = Directory.fromPath(dirPath)
+    preferredLibraries  = dirProperties.getProperty("preferredLibraries")
+    preferredLibrarySet = set(preferredLibraries) if preferredLibraries else None
+    programs            = dirProperties.getProperty("programs", [])
+    directory           = Directory.fromPath(dirPath)
     #print "Linking programs in directory " + dirPath + " files " + str(files) + " subDirs " + str(subDirs)
 
     # Try to build any programs in the directory
@@ -462,7 +463,7 @@ def linkPrograms(dirPath, dirProperties, files):
                         fatal("Failed to find symbol %s needed by %s in %s" % (hFile, program, dirPath))
 
                     if len(oFileList) > 1:
-                        if (preferredLibrarySet):
+                        if preferredLibrarySet:
                             for oFile in oFileList:
                                 if os.path.basename(oFile) in preferredLibrarySet:
                                     oFileList = [oFile]
