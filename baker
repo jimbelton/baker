@@ -407,6 +407,7 @@ def linkPrograms(dirPath, dirProperties, files):
     preferredLibraries  = dirProperties.getProperty("preferredLibraries")
     preferredLibrarySet = set(preferredLibraries) if preferredLibraries else None
     programs            = dirProperties.getProperty("programs", [])
+    systemLibraryFlags  = dirProperties.getProperty("systemLibraryFlags")
     directory           = Directory.fromPath(dirPath)
     #print "Linking programs in directory " + dirPath + " files " + str(files) + " subDirs " + str(subDirs)
 
@@ -420,6 +421,9 @@ def linkPrograms(dirPath, dirProperties, files):
         while True:
             try:
                 ldCommand = ["cc", sourceToTargetFileName(program + ".c"), "-o", "target/" + program]
+
+                if systemLibraryFlags:
+                    ldCommand.append(systemLibraryFlags)
 
                 for objectFile in extraObjectFiles.toList():
                     ldCommand.append(objectFile)
