@@ -442,6 +442,7 @@ def linkPrograms(dirPath, dirProperties, files):
             except subprocess.CalledProcessError as exception:
                 numberOfObjectFiles = len(extraObjectFiles)
                 undefinedSymbols    = []
+                newOrMovedFiles     = set()
 
                 for line in exception.output.split('\n'):
                     match = undefSymbolPat.search(line)
@@ -484,15 +485,19 @@ def linkPrograms(dirPath, dirProperties, files):
                     # If the symbol is in an object file thats already in the list, might need to move it later in the link order
                     #
                     if extraObjectFiles.has_key(oFile):
-                        if oFile in movedObjectFiles:
-                            sys.stderr.write(exception.output)
-                            fatal("Linker failed to find symbol %s needed by %s even after moving %s to end of list"
-                                  % (hFile, program,  oFile))
+                        if oFile not in newOrMovedFiles:
+                            if oFile in movedObjectFiles:
+                                sys.stderr.write(" ".join(ldCommand) + "\n")
+                                sys.stderr.write(exception.output)
+                                fatal("Linker failed to find symbol %s needed by %s even after moving %s to end of list"
+                                    % (symbol, program,  oFile))
 
-                        extraObjectFiles.remove(oFile)
-                        movedObjectFiles.add(oFile)
+                            newoOrMovedFiles.add(oFile)
+                            extraObjectFiles.remove(oFile)
+                            movedObjectFiles.add(oFile)
 
                     else:
+                        newOrMovedFiles.add(oFile)
                         movedObjectFiles.clear()    # When a file is added, allow any others to be moved past it
 
                     extraObjectFiles.add(oFile)
