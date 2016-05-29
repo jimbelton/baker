@@ -13,8 +13,14 @@ class OrderedSet:
     def add(self, element):
         self.orderedDict[element] = None
 
+    def has_key(self, key):
+        return self.orderedDict.has_key(key)
+
     def __len__(self):
         return len(self.orderedDict)
+
+    def remove(self, element):
+        del self.orderedDict[element]
 
     def toList(self):
         return self.orderedDict.keys()
