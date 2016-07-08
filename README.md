@@ -7,14 +7,14 @@ until the user's home directory is reached.
 
 Once all code is compiled, libraries are created in any source directory that doesn't contain a program (a .c file containing a
 *main* function). Finally, any programs are linked, using a similar process as for include files to find libaries that contain
-symbols they require.
+symbols they require. As of May, 2016, baker will automatically reorder the link for you.
 
 For improved performance, the rules used to compile each directory are stored in JSON format in the file *baker.doh*. This file can
 be checked in to git along with the code. If new dependencies are added, baker will detect them and modify the doh for you.
 
 ## Current Release Status
 
-Alpha: Proof of concept. I've used this version to build a couple of simple projects.
+Beta: Not ready for prime time. I'm using the current version to build most personal C projects, but there are still limitations.
 
 ## How to Install and Run
 
@@ -43,6 +43,7 @@ archive                 | string    | Name of the archive to create; defaults to
 ccFlags                 | object    | Pairs of flag and one of True (include), False (exclude), or appended value
 preferredIncludeDirExps | list      | List of regular expressions; matching directory paths will be preferred for header files found in more that one directory
 preferredLibraries      | list      | List of library filenames that will be preferred if there is more than one containing a required symbol
+systemLibraryFlags      | string    | A string of system library flags to be appended to the link (e.g. -lm for the math libary). I'd like to automate this in future.
 
 More will be added in future versions. See the [Baker Wiki](https://github.com/jimbelton/baker/wiki) for more details.
 
