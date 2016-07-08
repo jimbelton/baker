@@ -36,7 +36,7 @@ import signal
 import subprocess
 import sys
 
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(os.path.realpath(__file__))), "lib"))
 from properties import Properties
 from directory  import Directory, fileToDirectories
 from docopt     import docopt
