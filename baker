@@ -36,7 +36,8 @@ import signal
 import subprocess
 import sys
 
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(os.path.realpath(__file__))), "lib"))
+bakerDir = os.path.dirname(os.path.abspath(os.path.realpath(__file__)))
+sys.path.append(os.path.join(bakerDir, "lib"))
 from properties import Properties
 from directory  import Directory, fileToDirectories
 from docopt     import docopt
@@ -75,9 +76,12 @@ def removeTargets(dirPath, dirProperties, files):
 
             break
 
-protoPat = re.compile(r'(.+)-proto.h$')
+genxfaceScript = os.path.join(bakerDir, "genxface.pl")
+protoPat       = re.compile(r'(.+)-proto.h$')
 
 def generateDirHeaders(prefix, dirPath, dirName):
+    print "Generating " + prefix + "-proto.h for path " + dirPath + " directory " + dirName
+
     if prefix == dirName:
         if takeAction("'" + genxfaceScript + " -d' in " + dirPath):
             subprocess.check_output([genxfaceScript, "-d", dirPath])
@@ -141,7 +145,6 @@ def findFile(dirPath, fileName, exclude=None):
 def sourceToTargetFileName(sourceFileName):
     return "target/" + sourceFileName[:-2] + ".o"
 
-genxfaceScript = os.path.join(os.path.dirname(os.path.abspath(__file__)), "genxface.pl")
 hFilePat       = re.compile(r'(?:^(.*\.[ch]):\d+:\d+: fatal error:)\s(\S+\.h): No such file')
 
 def compileSources(dirPath, dirProperties, files):
@@ -207,7 +210,6 @@ def compileSources(dirPath, dirProperties, files):
                         # If the missing include file looks like a generated prototype file, try to generate it
                         #
                         if includer and hFile.endswith("-proto.h"):
-                            print includer + " includes " + hFile
                             includerDir = os.path.dirname(includer) or dirPath
                             includerDir = includerDir if includerDir[0] == '/' else os.path.join(dirPath, includerDir)
 
