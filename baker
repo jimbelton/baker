@@ -80,8 +80,6 @@ genxfaceScript = os.path.join(bakerDir, "genxface.pl")
 protoPat       = re.compile(r'(.+)-proto.h$')
 
 def generateDirHeaders(prefix, dirPath, dirName):
-    print "Generating " + prefix + "-proto.h for path " + dirPath + " directory " + dirName
-
     if prefix == dirName:
         if takeAction("'" + genxfaceScript + " -d' in " + dirPath):
             subprocess.check_output([genxfaceScript, "-d", dirPath])
@@ -94,6 +92,7 @@ def generateDirHeaders(prefix, dirPath, dirName):
 
         return True
 
+    warn("Failed to generate " + prefix + "-proto.h for path " + dirPath + " directory " + dirName)
     return False
 
 def regenerateHeaders(dirPath, dirProperties, files):
@@ -213,7 +212,7 @@ def compileSources(dirPath, dirProperties, files):
                             includerDir = os.path.dirname(includer) or dirPath
                             includerDir = includerDir if includerDir[0] == '/' else os.path.join(dirPath, includerDir)
 
-                            if generateDirHeaders(hFile[:-8], includerDir, os.path.basename(includerDir)):
+                            if generateDirHeaders(hFile[:-8], includerDir, os.path.basename(os.path.abspath(includerDir))):
                                 interfacesGenerated = True
                                 break
 
