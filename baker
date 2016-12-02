@@ -110,7 +110,6 @@ def regenerateHeaders(dirPath, dirProperties, files):
 def findFile(dirPath, fileName, exclude=None):
     """
     Look for the fileName in all directories under the dirPath, excluding the exclude subdirectory if set or parent if ".."
-
     @return A list of directory objects or None if not found
     """
 
@@ -217,18 +216,14 @@ def compileSources(dirPath, dirProperties, files):
                                 interfacesGenerated = True
                                 break
 
-                        hDirList = findFileInDirectories(hFile)    # May be in the cache
+                        hDirList = findFileInDirectories(hFile, closestToPath=dirPath)    # May be in the cache
 
                         if not hDirList:
                             hDirList = findFile(os.path.dirname(dirPath), hFile, exclude=os.path.basename(dirPath))
 
-                        if not hDirList:
-                            sys.stderr.write(exception.output)
-                            fatal("Failed to find C header file %s included by %s/%s" % (hFile, dirPath, entry))
-
-                        if len(hDirList) > 1:
+                        # If the file was found in more than one equally preferable place, check for doh that selects a directory
+                        if hDirList and len(hDirList) > 1:
                             if preferredIncludeDirExps:
-
                                 for hDir in hDirList:
                                     for exp in preferredIncludeDirExps:
                                         if re.match(exp, hDir.path):
@@ -238,10 +233,47 @@ def compileSources(dirPath, dirProperties, files):
                                     if len(hDirList) == 1:
                                         break
 
-                            if len(hDirList) > 1:
-                                sys.stderr.write(exception.output)
-                                fatal("Found C header file %s included by %s/%s exists in multiple directories: %s"
-                                        % (hFile, dirPath, entry, [hDir.path for hDir in hDirList]))
+                        # Still not found or multiple choices? Look for a .h.in file and a configure script (autoconf special case)
+                        if not hDirList or len(hDirList) > 1:
+                            hSourceDirs = findFileInDirectories(hFile + ".in", closestToPath=dirPath)
+
+                            if not hSourceDirs:
+                                hDirSources = findFile(dirPath, hFile  + ".in")
+
+                            if hSourceDirs:
+                                if len(hSourceDirs) > 1:
+                                    fatal("Found %s.in found for missing C header file included by %s/%s in multiple directories: %s"
+                                          % (hFile, dirPath, entry, [hDir.path for hDir in hSourceDirs]))
+
+                                if not hSourceDirs[0].containsFile("configure"):
+                                    fatal("Found %s.in for missing C header file included by %s/%s, but no configure script in %s"
+                                          % (hFile, dirPath, entry, hSourceDirs[0].path))
+
+                                currentDir = os.getcwd()
+                                os.chdir(hSourceDirs[0].path)
+
+                                try:
+                                    output = subprocess.check_output(["./configure"], stderr=subprocess.STDOUT)
+                                except subprocess.CalledProcessError as exception:
+                                    sys.stderr.write(exception.output)
+                                    fatal("Failed to run './configure' in %s" % (hSourceDirs[0].path))
+
+                                os.chdir(currentDir)
+
+                                if not hSourceDirs[0].containsFile(hFile):
+                                    fatal("Running './configure' in %s failed to generate missing C header file %s included by %s/%s"
+                                          % (hSourceDirs[0].path, hFile, dirPath, entry))
+
+                                hDirList = hSourceDirs
+
+                        if not hDirList:
+                            sys.stderr.write(exception.output)
+                            fatal("Failed to find C header file %s included by %s/%s" % (hFile, dirPath, entry))
+
+                        if len(hDirList) > 1:
+                            sys.stderr.write(exception.output)
+                            fatal("Found C header file %s included by %s/%s exists in multiple directories: %s"
+                                  % (hFile, dirPath, entry, [hDir.path for hDir in hDirList]))
 
                         extraIncludeDirs.add(hDirList[0].getRelpath())
 
@@ -542,7 +574,7 @@ if getOption("clean"):
 
 # Compile any source files found in and under the current directory, then link any programs and archive any directories with none
 
-Directory.setIndexExp(r'.+\.h$')
+Directory.setIndexExp(r'.+\.h(?:\.in)?$')        # Index .h files, as well as .h.in (autoconf .h source files special case)
 visitDirTree(startDirPath, regenerateHeaders)
 visitDirTree(startDirPath, compileSources)
 visitDirTree(startDirPath, archiveObjects)

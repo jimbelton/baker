@@ -5,32 +5,70 @@ directories       = {}
 fileToDirectories = {}
 indexPat          = None
 
-def findFileInDirectories(filePath):
+def lengthOfCommonPrefix(left, right):
+    maximum = len(left) if len(left) < len(right) else len(right)
+
+    for i in range(0, maximum):
+        if left[i] != right[i]:
+            return i
+
+    return maximum
+
+def findFileInDirectories(filePath, closestToPath = None):
     """
     Search for a file in the cache of directories, respecting its leading directory path if any
+    @param filePath      The path to the file to search for. This can be a filename, a relative path, or an absolute path
+    @param closestToPath If specified and multiple directories, return only the one(s) with the largest common prefix with this path
     """
+
+    if filePath[0] == '/':    # Absolute paths are a special case: just look
+        if not os.path.is_file(filePath):
+            return None
+
+        return [Directory.fromPath(os.path.dirname(filePath))]
+
     fileName = os.path.basename(filePath)
     filePath = os.path.dirname(filePath)
     fileDirs = fileToDirectories.get(fileName)
 
-    # Not found or normal case (just a file name)
-    if not fileDirs or filePath == "":
+    if not fileDirs:    # Not found
+        return None
+
+    if filePath != "":    # Relative paths must be verified
+        matching = []
+        filePath = "/" + filePath    # Match a full directory name at the beginning of the path
+
+        for fileDir in fileDirs:
+            if fileDir.path.endswith(filePath):
+                matching.append(Directory.fromPath(fileDir.path[:-len(filePath)]))    # Need the directory that the filePath is under
+
+        if len(matching) == 0:
+            return None
+
+        fileDirs = matching
+
+    if len(fileDirs) == 1 or not closestToPath:
         return fileDirs
 
-    # Absolute path
-    if filePath[0] == '/':
-        for fileDir in fileDirs:
-            if fileDir.path == filePath:
-                return [fileDir]
+    # Find the closest match(es)
 
-    matching = []
-    filePath = "/" + filePath    # insure we match a full directory name at the beginning of the path
+    longestCommonPath = 0
+    matching          = []
 
     for fileDir in fileDirs:
-        if fileDir.path.endswith(filePath):
-            matching.append(Directory.fromPath(fileDir.path[:-len(filePath)]))    # Need the directory that the filePath is under
+        commonLen = lengthOfCommonPrefix(fileDir.path, closestToPath)
 
-    return matching if len(matching) > 0 else None
+        if commonLen < longestCommonPath:
+            continue
+
+        if commonLen > longestCommonPath:
+            matching          = []
+            longestCommonPath = commonLen
+
+        matching.append(fileDir)
+
+    assert len(matching) > 0
+    return matching
 
 class Directory:
     def __init__(self, path):
@@ -50,6 +88,9 @@ class Directory:
             return directories[path]
         except KeyError:
             return clazz(path)
+
+    def containsFile(self, fileName):
+        return os.path.isfile(os.path.join(self.path, fileName))
 
     def getRelpath(self, start=os.curdir):
         return os.path.relpath(self.path, start)
