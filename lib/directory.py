@@ -11,7 +11,7 @@ def findFileInDirectories(filePath):
     """
     fileName = os.path.basename(filePath)
     filePath = os.path.dirname(filePath)
-    fileDirs = fileToDirectories[fileName]
+    fileDirs = fileToDirectories.get(fileName)
 
     # Not found or normal case (just a file name)
     if not fileDirs or filePath == "":
