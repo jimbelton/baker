@@ -39,7 +39,7 @@ import sys
 bakerDir = os.path.dirname(os.path.abspath(os.path.realpath(__file__)))
 sys.path.append(os.path.join(bakerDir, "lib"))
 from properties import Properties
-from directory  import Directory, fileToDirectories
+from directory  import Directory, findFileInDirectories
 from docopt     import docopt
 from options    import error, fatal, getOption, setOptions, takeAction, warn
 from OrderedSet import OrderedSet
@@ -110,13 +110,14 @@ def regenerateHeaders(dirPath, dirProperties, files):
 def findFile(dirPath, fileName, exclude=None):
     """
     Look for the fileName in all directories under the dirPath, excluding the exclude subdirectory if set or parent if ".."
+
+    @return A list of directory objects or None if not found
     """
 
     (files, subDirs) = Directory.fromPath(dirPath).getContents()
     #print "Looking for %s under %s (subDirs=%s, files=%s)" % (fileName, dirPath, str(subDirs), str(files))
 
     # Look in all subdirectories
-
     for subDir in subDirs:
         if subDir == exclude:
             continue
@@ -124,7 +125,7 @@ def findFile(dirPath, fileName, exclude=None):
         findFile(os.path.join(dirPath, subDir), fileName, exclude="..")
 
     # Return if found
-    directories = fileToDirectories.get(fileName)
+    directories = findFileInDirectories(fileName)
 
     if directories:
         return directories
@@ -216,11 +217,7 @@ def compileSources(dirPath, dirProperties, files):
                                 interfacesGenerated = True
                                 break
 
-                        hDirList = fileToDirectories.get(hFile)
-
-                        # May be in the cache
-                        if not hDirList:
-                            hDirList = fileToDirectories.get(hFile)
+                        hDirList = findFileInDirectories(hFile)    # May be in the cache
 
                         if not hDirList:
                             hDirList = findFile(os.path.dirname(dirPath), hFile, exclude=os.path.basename(dirPath))

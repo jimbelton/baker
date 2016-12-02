@@ -5,10 +5,40 @@ directories       = {}
 fileToDirectories = {}
 indexPat          = None
 
+def findFileInDirectories(filePath):
+    """
+    Search for a file in the cache of directories, respecting its leading directory path if any
+    """
+    fileName = os.path.basename(filePath)
+    filePath = os.path.dirname(filePath)
+    fileDirs = fileToDirectories[fileName]
+
+    # Not found or normal case (just a file name)
+    if not fileDirs or filePath == "":
+        return fileDirs
+
+    # Absolute path
+    if filePath[0] == '/':
+        for fileDir in fileDirs:
+            if fileDir.path == filePath:
+                return [fileDir]
+
+    matching = []
+    filePath = "/" + filePath    # insure we match a full directory name at the beginning of the path
+
+    for fileDir in fileDirs:
+        if fileDir.path.endswith(filePath):
+            matching.append(Directory.fromPath(fileDir.path[:-len(filePath)]))    # Need the directory that the filePath is under
+
+    return matching if len(matching) > 0 else None
+
 class Directory:
     def __init__(self, path):
         self.path         = path
         directories[path] = self
+
+    def __repr__(self):
+        return self.path
 
     @classmethod
     def fromPath(clazz, path):
@@ -31,7 +61,7 @@ class Directory:
         """
 
         try:
-            return (self.files, self.subDirs)
+            return (self.files, self.subDirs)    # Return cached contents
         except AttributeError:
             self.files   = []
             self.subDirs = []
