@@ -152,9 +152,14 @@ def compileSources(dirPath, dirProperties, files):
     """
 
     preferredIncludeDirExps = dirProperties.getProperty("preferredIncludeDirExps")
+    ignoreFilesSet          = set(dirProperties.getProperty("ignoreFiles")) if dirProperties.getProperty("ignoreFiles") else None
 
     for entry in files:
         if entry.endswith(".c"):
+            if ignoreFilesSet and entry in ignoreFilesSet:
+                warn("Ignoring {} in {}".format(entry, dirPath));
+                continue
+
             if not os.path.isdir("target"):
                 os.mkdir("target")
 
