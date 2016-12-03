@@ -41,6 +41,7 @@ Property                | JSON Type | Description
 ----------------------- | --------- | -----------
 archive                 | string    | Name of the archive to create; defaults to `target/<dir-name>.ar`; if specified in a directory that contains program and non-program object files, the non-program objects (i.e. the ones that don't define **main**) will be archived
 ccFlags                 | object    | Pairs of flag and one of True (include), False (exclude), or appended value
+ignoreFiles             | list      | List of source files to ignore
 preferredIncludeDirExps | list      | List of regular expressions; matching directory paths will be preferred for header files found in more that one directory
 preferredLibraries      | list      | List of library filenames that will be preferred if there is more than one containing a required symbol
 systemLibraryFlags      | string    | A string of system library flags to be appended to the link (e.g. -lm for the math libary). I'd like to automate this in future.
