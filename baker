@@ -28,6 +28,7 @@ Options:
     -v --verbose   Tell what is being done
 """
 
+import errno
 import os
 import re
 import resource
@@ -358,8 +359,18 @@ def findSymbol(dirPath, symbol, exclude=None):
     except AttributeError:
         pass
 
-    (files, subDirs) = Directory.fromPath(dirPath).getContents()
-    #print "Looking for %s under %s (subDirs=%s)" % (symbol, dirPath, str(subDirs))
+    directory.symbolsIndexed = True    # Done early to prevent a recursion loop on /usr/lib
+
+    try:
+        (files, subDirs) = directory.getContents()
+    except OSError as exception:
+        if exception.errno == errno.EACCES:
+            sys.stderr.write("warning: Skipped directory {}: permission denied\n".format(dirPath))
+            return None
+
+        raise exception
+
+    #sys.stderr.write("Looking for %s under %s (subDirs=%s)\n" % (symbol, dirPath, str(subDirs)))
 
     # Look in all subdirectories
 
@@ -377,8 +388,6 @@ def findSymbol(dirPath, symbol, exclude=None):
             symbols  = getSymbolsFromObjectFile(filePath)
             dictOfListsBulkAdd(symbolToFiles, symbols, filePath)
 
-    directory.symbolsIndexed = True
-
     # Return if found
 
     foundFiles = symbolToFiles.get(symbol)
@@ -386,17 +395,16 @@ def findSymbol(dirPath, symbol, exclude=None):
     if foundFiles:
         return foundFiles
 
-    # If we came from the parent, return none
-    if exclude == "..":
-        return None
+    # If we didn't come from the parent directory
+    if exclude != "..":
+        parent = os.path.dirname(dirPath)
 
-    parent = os.path.dirname(dirPath)
+        # If we haven't reached the user's home directory, continue down to the root.
+        if parent != "/home":
+            return findSymbol(parent, symbol, exclude=os.path.basename(dirPath))
 
-    # Don't leave the user's directory; may want to allow this to be overridden
-    if parent == "/home":
-        return None
-
-    return findSymbol(parent, symbol, exclude=os.path.basename(dirPath))
+    # Last chance: look in "/usr/lib" if we haven't looked there yet
+    return findSymbol("/usr/lib", symbol, exclude="..")
 
 def enableCoreDumps():
     resource.setrlimit(resource.RLIMIT_CORE, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
@@ -546,6 +554,7 @@ if getOption("clean"):
 
 # Compile any source files found in and under the current directory, then link any programs and archive any directories with none
 
+print "-" * 79
 Directory.setIndexExp(r'.+\.h$')
 visitDirTree(startDirPath, regenerateHeaders)
 visitDirTree(startDirPath, compileSources)
