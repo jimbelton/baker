@@ -19,7 +19,7 @@
 use strict;
 
 use Carp;
-use Cwd;
+use Cwd qw(abs_path);
 use File::Basename;
 use Getopt::Std;
 
@@ -901,6 +901,8 @@ my @files = ();
 foreach my $name (@ARGV)
 {
     if (-d "$name") {
+        $name = abs_path($name);    # If the directory name's last element is .., fix it
+
         if ($opts{d}) {
             push(@files, glob($name."/*.h"));    # Look for inline functions: They need prototypes too (wierdly enough)
         }
