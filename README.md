@@ -16,6 +16,8 @@ be checked in to git along with the code. If new dependencies are added, baker w
 
 Beta: Not ready for prime time. I'm using the current version to build most personal C projects, but there are still limitations.
 
+2017-06-24: Now look in /usr/lib for missing symbols (e.g. for libm.a math library functions)
+
 ## How to Install and Run
 
 Bring baker down from github. Include the main directory in your path or create a symbolic link to "baker" from a directory in your
