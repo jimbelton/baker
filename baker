@@ -509,7 +509,7 @@ def linkPrograms(dirPath, dirProperties, files):
 
                     if not oFileList:
                         sys.stderr.write(exception.output)
-                        fatal("Failed to find symbol %s needed by %s in %s" % (hFile, program, dirPath))
+                        fatal("Failed to find symbol %s needed by %s in %s" % (symbol, program, dirPath))
 
                     if len(oFileList) > 1:
                         if preferredLibrarySet:
